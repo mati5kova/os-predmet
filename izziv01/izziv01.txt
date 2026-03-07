@@ -1,0 +1,104 @@
+## OSNOVNO DELO V LUPINI
+a)
+logout -> notranji
+ls -> zunanji
+cd -> notranji
+pwd -> notranji
+date -> zunanji
+echo -> notranji
+printf -> notranji
+alias -> notranji
+fi -> keyword
+esac -> keyword
+### Pomagamo si z ukazi `type`, `man`, `help`
+
+b)
+echo "$PATH" | tr ':' '\n'
+
+c)
+Prednost imajo built-in ukazi. Za izvedbo zunanjega ukaza (ko je prisoten tudi build-in verzija) zapisemo celotno pot do ukaza
+npr. 
+bash-5.3$ type -a echo
+echo is a shell builtin
+echo is /bin/echo
+bash-5.3$ /bin/echo hello world
+
+d)
+Vgrajena različica: `help`
+Zunanja različica: `man`
+
+f)
+bash-5.3$ history
+234 ukazov
+
+g)
+[ bash-5.3$ history | sed -n '3p' ] <- izpiše 3. ukaz iz zgodovine
+bash-5.3$ !3  <- požene 3. ukaz iz zgodovine
+
+h)
+bash-5.3$ sleep 1000
+control + z
+bash-5.3$ jobs
+fg %st_joba
+
+## OSNOVNO DELO Z DATOTEKAMI IN IMENIKI
+b) 
+bash-5.3$ cd /var && pwd && cd /Users/matevz/Documents/dev/os/izziv01
+
+c)
+bash-5.3$ mkdir -p t1/{t2,t3/{t5,t6},t4}     <- PAZI DA NI PRESLEDKOV
+bash-5.3$ mkdir -p t1/t2 t1/t3/t5 t1/t3/t6 t1/t4
+
+d)
+bash-5.3$ head -n 5 /etc/fstab
+
+e)
+bash-5.3$ tail -n 6 /etc/group
+
+f)
+bash-5.3$ cut -d : -f 7 /etc/passwd | uniq
+
+g)
+bash-5.3$ cat /etc/protocols | sort
+
+h)
+bash-5.3$ cat /etc/protocols | nl
+
+i)
+bash-5.3$ grep udp /etc/services
+
+j)
+bash-5.3$ wc /etc/passwd 
+
+## IZPIS IN TERMINAL
+a)
+bash-5.3$ echo -e "$a\t$b\t$c"
+
+b)
+bash-5.3$ printf "%d\t%d\t%d\n" $a $b $c
+
+c)
+bash-5.3$ clear
+
+d)
+bash-5.3$ tty
+
+## IZZIV ZA ODDAJO
+
+neofetch >> dat.txt
+
+mkdir -p f1/{f2/{f3,f4}/f5/{f6,f7},f8,f9/f10,f11}
+
+tree >> dat.txt
+
+echo "Uporabljas Macbooka s cipom:" >> dat.txt
+grep --colour -H -i -n CPU dat.txt >> dat.txt
+
+read najljubsi_ukaz
+
+echo najljubsi_ukaz >> dat.txt
+
+cat dat.txt | wc
+
+cat dat.txt
+

@@ -1,0 +1,50 @@
+pwd - print working directory
+cd - change directory (absolutna/relativna pot /xyz vs xyz)
+ls - list (flagi: a, l, ...)
+touch - preberi `man touch`, ustvarjanje datoteke je v resnici stranski produkt lol
+echo - izpise kar mu das notri kot argument
+printf
+date
+
+read ime_spremenljivke - shrani prebrano v `ime_spremenljivke` - kasneje dostopno preko $ime_spremenljivke
+ime_spremenljivke="ls               -a"       ----->  !!pazi na spresledke!!
+echo $ime_spremenljivke                      -----> izpise `ls -a`
+echo "$ime_spremenljivke"                    -----> izpise `ls               -a`
+echo '$ime_spremenljivke'                     -----> izpise $ime_spremenljivke
+
+type -a date -> date is /bin/date
+type -a echo -> echo is a shell builtin; echo is /bin/echo
+
+echo $path -> izpise prazno vrstico, bash je case-sensitive, se ne pritozi ker mu je vseeno da je spremenljivka prazna
+echo $PATH
+
+which - "slabsi `type`"
+
+!! -> pozene zadnji ukaz
+
+cat ime_datoteke.txt -> izpise vsebino datoteke z imenom `ime_datoteke` (ce le ta obstaja)
+
+ctrl+c -> prekinitev izvajanja ukaza
+ctrl+d -> konec vnosa podatkov
+
+man -> za zunanje ukaze
+help -> za interne ukaze
+
+mkdir
+mkdir -p 1/2 -> gnezdeni folderji
+rmdir
+
+rm -> brisi file
+rm -r -> rekurzivno brisanje
+rm -rf
+
+cp dat1.txt dat2.txt -> skopiraj vsebino dat1.txt v dat2.txt
+mv src dst
+
+-- pattern matching --
+echo *.txt -> a.txt abc.txt
+echo ?.txt -> a.txt
+
+more, less
+
+echo $
