@@ -1,0 +1,86 @@
+## OSNOVNO O SKRIPTAH
+1)
+#!/bin/bash
+cat $0
+
+2)
+#!/bin/bash
+rm "$0"
+
+3)
+#!/bin/bash
+privzeta_vrednost=42
+privzeta_vrednost="$1"
+exit $privzeta_vrednost
+
+## SUBSTITUCIJA VREDNOSTI SPREMENLJIVK
+1)
+#!/bin/bash
+a=1:2:3:4:5
+echo ${a//:/,}
+
+2)
+#!/bin/bash
+a=1:2:3:4:5
+echo ${a#*:}
+
+3)
+#!/bin/bash
+a=1:2:3:4:5
+echo ${a##*:}
+
+4)
+#!/bin/bash
+a=1:2:3:4:5
+echo ${a%:*}
+
+5)
+#!/bin/bash
+a=1:2:3:4:5
+echo ${a%%:*}
+
+## POGOJNI IZRAZI
+1)
+#!/bin/bash
+[[ -n /etc/passwd ]] && echo "OK"
+
+2)
+#!/bin/bash
+mkdir naloga && cd naloga && pwd && cd ..
+
+3)
+#!/bin/bash
+mkdir naloga && cd naloga && pwd && cd ..
+
+## ZANKICE
+1)
+#!/bin/bash
+for (( i=0; i<=100; i+=2 )); do echo $i; done
+
+2)
+#!/bin/bash
+for f in *.jpg; do
+    [ -e "$f" ] || continue
+    mv -- "$f" "${f%.jpg}.jpeg"
+done
+
+## UJEMANJE VZORCEV
+
+## SKRIPTE
+1)
+#!/bin/bash
+arg1="$1"
+shift
+while [[ -n $1 ]]; do
+    [[ $1 = $arg1 ]] && echo DA || echo NE
+    shift
+done
+
+2)
+#!/bin/bash
+while [[ -n $1 ]]; do
+    [[ $(( $1 % 4)) -eq 0 ]] && [[ $(($1 % 100)) -ne 0 ]] || [[ $(($1 % 400)) -eq 0 ]] && echo DA || echo NE
+    shift
+done
+
+

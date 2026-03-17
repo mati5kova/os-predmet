@@ -1,0 +1,133 @@
+#!/bin/bash
+exit 0
+
+$0 - ime skripte
+$1...n - posamezni argumenti skripte (0 <= n <= 9) - za argumente na poziciji 10 in naprej je pravilno in bolj varno napisati `${12}` -> bash pri številkah brez zavitih oklepajev vzame samo prvo cifro kot pozicijski parameter
+$@, $* - vsi argumenti skripte
+
+## obdelaj vse argumente skripte - SHIFT
+while [[ -n $1 ]]; do
+    echo $1
+    shift
+done
+
+## spremenljivke
+-> spremenljivke v bashu nimajo tipa
+globalne spremenljivke:
+var_name=vrednost
+
+lokalne spremenljivke:
+local var_name=vrednost
+
+unset var_name <- odstrani var_name spremenljivko iz variable lista od lupine, posebej koristno ce imas lokalne spremenljivke znotraj funkciji brez da uporabis besedo `local`
+
+## enojne/dvojne navednice
+enojne navednice '...' -> predstavljajo dobesedno predstavitev niza
+dvojne navednice "..." -> izvedejo se morebitne notranje substitucije
+
+## Nizi in podnizi
+${#ime} … dolžina niza, shranjenega v ime
+${ime:poz} … podniz od indeksa poz do konca
+${ime:poz:dol} … podniz od indeksa poz dolžine dol
+
+## Odstranjevanje podnizov
+${ime#vzorec} … najkrajša predpona
+${ime##vzorec} … najdaljša predpona
+${ime%vzorec} … najkrajša pripona
+${ime%%vzorec} … najdaljša pripona
+
+## Zamenjava podniza
+${ime/vzorec/vrednost} … prva pojavitev
+${ime//vzorec/vrednost} … vse pojavitve
+
+## pogojni izrazi
+test pogoj
+[ pogoj ]
+[[ pogoj ]]   <- PAZI, PRESLEDKI SO ZELO ZELO POMEMBNI
+$? -> ima vrednost zadnjega "returna"
+
+### primerjava nizov
+-z niz     - je niz prazen
+-n niz     - je niz neprazen
+=
+!=
+<
+>
+
+### preverjanje datotek
+-e pot - ali datoteka obstaja
+-f pot - je datoteka regular file
+-d pot - je datoteka imenik
+-L pot - je datoteka simbolicna povezava
+-b pot - je datoteka blocna naprava
+-c pot - je datoteka znakovna naprava
+
+### pogojni izrazi
+[[ pogoj && pogoj ]]
+[[ pogoj || pogoj ]]
+
+ukaz && ukaz
+ukaz || ukaz
+#### primer:
+true || echo "to se ne izpise"
+false || echo "to se izpise"
+  
+### aritmeticni pogoji
+-eq
+-ne
+-gt
+-ge
+-lt
+-le
+
+### aritmetika in dvojni oklepaji
+ovrednotenje izraza: (( izraz ))
+ovrednotenje in substitucija: $(( izraz ))
+  
+## IF
+if pogoj; then
+    izraz; izraz; izraz
+elif pogoj; then
+    izraz
+else
+    izraz
+fi
+
+## ZANKE
+i=42; while (( i > 0 )); do echo $i; (( i-- )); done
+
+i=42; until (( i == 0 )); do echo $i; (( i-- )); done
+
+while read line; do echo $line; done
+
+while ping –c 1 s.ki; do
+    echo Juhuhu smučanje.
+    sleep 2
+done
+
+while [[ –e "$file" ]] && grep syscall "$file"; do
+    . . .
+Done
+
+seznam='a b c d'
+for x in $seznam; do
+    echo $x
+done
+
+for (( i=0; i <= 42; i++ )); do echo $i; done
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

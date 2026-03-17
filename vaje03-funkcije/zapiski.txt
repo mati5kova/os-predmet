@@ -1,0 +1,44 @@
+## PODLUPINA
+je podproces trenutne lupine
+nudi avtomatsko dedovanje (deluje samo v eno smer) - pwd; (cd /; pwd); pwd
+echo $BASH_SUBSHELL -> 0
+(echo $BASH_SUBSHELL) -> 1
+( (echo $BASH_SUBSHELL) ) -> 2
+(  ( (echo $BASH_SUBSHELL) ) ) -> 3
+PAZI NA PRESLEDKE DRUGAČE JE EVALVACIJA ARITMETIČNIH IZRAZOV
+
+### zagon podlupine s substitucijo
+$( ukaz )
+
+u=$(whoami); h=$(hostname); echo Dobrodošel $u na $h
+~
+echo Dobrodošel $(whoami) na $(hostname)
+
+### dedovanje spremenljivk
+x=42; echo $x; ( echo $x; x=1; echo $x ); echo $x
+42
+42
+1
+42
+
+### ukazni bloki
+{ ukazi; }
+
+## FUNKCIJE
+function ime { ukazi; }
+ime() { ukazi; }
+ime() {
+    ukaz;
+    ukaz
+}
+
+### klic funkcije
+ime arg1 arg2 ...
+
+### argumenti funkcije
+do njih znotraj funkcije dostopamo enako kot izven funkcije dostopamo do argumentov skripte
+$1, $2, $3, ...
+
+### rezultat funkcije
+return status
+
