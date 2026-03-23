@@ -1,0 +1,80 @@
+## NADZOR POSLOV
+### Zagon ukaza v ozadju z &
+tree / &
+
+sleep 1; sleep 2; sleep 3; -> terminal je za nas nedostopen 6 sekund
+sleep 1 & sleep 2 & sleep 3 & -> ukazna vrstica je na voljo takoj, po 3sekundah se ustavi zadnji job
+
+bash-5.3$ sleep 100 & sleep 150 &
+[1] 81503
+[2] 81504
+bash-5.3$ jobs
+[1]-  Running                    sleep 100 &
+[2]+  Running                    sleep 150 &
+
+=> [1] in [2] sta JID -> JOB_ID
+=> 81503 in 81504 sta PID -> PROCESS_ID
+
+bash-5.3$ jobs -> izpis aktivnih poslov
+fg jid -> nadaljevanje posla v ospredju/foregroundu
+bg jid -> nadaljevanje posla v ozadju
+
+disown pid -> lupina posla ob končanju ne pokonča npr. bash-5.3$ firefox .... disown `pid` -> firefox še vedno odprt
+
+## PREUSMERJANJE
+ukaz <datoteka … preusmerjanje standardnega vhoda
+ukaz >datoteka ... preusmerjanje standardnega izhoda, prepisovanje (owerwrite)
+ukaz >>datoteka … presumerjanje standardnega izhoda, dodajanje (append)
+
+0-stdin
+1-stdout
+2-stderr
+
+ukaz 2>datoteka -> preusmeri stderr v datoteko
+ukaz 1>datoteka 2>&1 -> stdout in stderr
+ukaz &>datoteka -> okrajšava za stdout in stderr v datoteko
+
+primera ki združujeta posle in preusmerjanje
+tree ~/Documents/dev/os &>drevesni_izpis.txt &    -> v ozadju izpisi drevesni izpis v datoteko
+ls -R / &>/dev/null                                                     -> preusmeri izpis v /dev/null -> zanemari output
+
+### Tukaj dokument (here document) -> pride lahko na IZPITU
+ukaz <<EOF       <- dokument, izvedba substitucij
+ukaz <<'EOF'      <- dobesedni dokument
+
+read –p 'Vnesi ime: ' ime
+cat <<EOF >skripta.sh
+#!/bin/bash
+echo Živjo $ime.
+EOF
+
+### Tukaj niz (here string)
+ukaz <<< niz
+npr. cat <<< "To je niz, ki ga podajam na stdin"
+
+### Branje datoteke vrstico po vrstico
+#!/bin/bash
+while read line; do
+    echo $line
+done <$1                 <- treba preusmerit prvi argument v while zanko ne pa v `read line`
+
+------------------------------------------------------------------------
+#!/bin/bash
+IFS=':'                                                    <- separator ki ga read upošteva, defaulten separator je presledek
+while read user pass uid gid rest; do
+    echo $((uid + gid)) 
+done < /etc/passwd
+
+### CEVOVOD UKAZOV (command pipeline)
+ukaz1 | ukaz2 | ukaz3 | ... | ukazN
+
+cut -d: -f6 /etc/passwd | sort  | uniq | nl             -> poreži datoteko /ect/passwd  po separatorju ":", izberemo 6. stolpec, vzamemo samo unikate in izhoda prejsnjega ukaza in izvedemo number lines nad izhodom ukaza `uniq`; `sort` pred `uniq` je potreben ker `uniq` pomeče ven duplikate če so zaporedni
+
+cat /etc/shells | egrep '^/bin'  | tr "bin" "abc"                -> izpisi vse vrstice iz /etc/shells ki se zacnejo z '/bin' in translate-a (zamenja) pojavitve "bin" z "abc" (pazi: ne moreš narest tr "bin" "smetnjak" ker je smetnjak daljša beseda in bo uporabilo samo črke "sme")
+
+cat /etc/shells | sort | tee lupine.txt | nl                        -> izpise sortirane lupine v datoteko lupine.txt IN HKRATI izpisuje v terminal -> PAZI: tee lupine.txt je po ukazu `sort` in PRED ukazom `nl` torej bo vsebina datoteke lupine.txt NEOŠTEVILČENA med tem ko bo izpis v terminalu OŠTEVILČEN
+
+
+
+
+

@@ -1,0 +1,48 @@
+/Users/matevz/Documents/dev/os
+├── izziv01-osnove
+│   ├── dat.txt
+│   ├── f1
+│   │   ├── f11
+│   │   ├── f2
+│   │   │   ├── f3
+│   │   │   │   └── f5
+│   │   │   │       ├── f6
+│   │   │   │       └── f7
+│   │   │   └── f4
+│   │   │       └── f5
+│   │   │           ├── f6
+│   │   │           └── f7
+│   │   ├── f8
+│   │   └── f9
+│   │       └── f10
+│   └── izziv01.txt
+├── izziv02-skriptiranje
+│   ├── izziv02.txt
+│   ├── naloga
+│   ├── skripta.sh
+│   ├── slika1.jpeg
+│   ├── slika2.jpeg
+│   ├── slika3.png
+│   └── studenti.txt
+├── izziv03-funkcije
+│   ├── dir1
+│   │   ├── besedilo.txt
+│   │   ├── dir2
+│   │   │   └── novo_besedilo.txt
+│   │   ├── dir3
+│   │   └── slika.jpg
+│   ├── izziv03.txt
+│   └── sprehod.sh
+├── vaje01-ukazna-lupina
+│   └── zapiski.txt
+├── vaje02-skriptiranje
+│   ├── skripta.sh
+│   └── zapiski.txt
+├── vaje03-funkcije
+│   └── zapiski.txt
+└── vaje04-posli-preusmerjanje
+    ├── drevesni_izpis.txt
+    ├── skripta.sh
+    └── zapiski.txt
+
+26 directories, 20 files
