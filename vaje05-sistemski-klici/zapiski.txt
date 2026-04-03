@@ -1,0 +1,12 @@
+## Dostop do jedra OS
+### Preko nekaterih ukazov
+uname … izpis informacij od jedru in OS
+arch … izpis arhitekture procesorja
+hostname … izpis imena gostiteljskega računalnika
+free … izpis informacij o pomnilniku
+dmesg … izpis sistemskih obvestil
+sysctl -a … izpis sistemskih nastavitev
+
+### Preko /proc
+
+## mymkdir-1.c
