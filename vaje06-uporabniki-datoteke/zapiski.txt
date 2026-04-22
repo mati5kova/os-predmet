@@ -1,0 +1,54 @@
+## Lokalni dostop
+whoami … kdo sem?
+id … podatki uporabniškega računa
+groups … pripadajoče skupine
+passwd … nastavitev gesla
+$UID … trenutni uid
+$HOME … domači imenik
+
+## Oddaljeni dostop
+users, who, w … pregled prijav
+last, lastb … zgodovina uspešnih / neuspešnih prijav
+$HOSTNAME … ime računalnika
+
+sudo … izvajanje podanega ukaza kot drug uporabnik (običajno superuser)
+su … zamenjava uporabnika (substitute user) in zagon lupine
+sg, newgrp … zamenjava skupine
+
+## ADMINISTRACIJA UPORABNIKOV
+### Uporabniški računi
+/etc/default/useradd -> privzete nastavitve pri ustvarjanju novega uporabniškega računa
+                     -> SKEL=/etc/skel -> "skeletal" user files (npr. .profile ki je skopiran v uporabnikov /home direktorij ko je ustvarjen)
+                     
+useradd ... odstranjevanje uporabniškega računa
+userdel ... spreminjanje uporabniškega računa
+usermod ... spreminjanje privzete lupine
+chpasswd ... spreminjanje gesla
+chage ... spreminjanje lastnosti gesla
+chgrp ... spreminjanje skupine
+
+useradd -m -d /home/student/jn1234 -s /bin/bash -g student -c
+"Janez Novak" jn1234
+chpasswd <<< jn1234:geslo
+-m -> ustvari uporabnikov home direktorij če ta še ne obstaja
+-d -> nov uporabnik bo ustvarjen z uporabo HOME_DIR kot uporabnikov login direktorij
+-s -> nastavi pot do uporabnikove login lupine, brez tega se uporabi SHELL value znotraj /etc/default/useradd
+-g -> ime ali stevilka uporabnikove primarne skupine (group name MORA OBSTAJATI!)
+-c -> komentar oz. kratek opis accounta - se uporablja tudi za uporabnikovo polno ime
+jn1234 -> LOGIN vrednost
+
+### Uporabniške skupine
+groupadd … ustvarjanje skupine
+groupdel … odstranjevanje skupine
+groupmod … spreminjanje skupine
+gpasswd … nastavitev gesla skupine
+
+
+## TIPI DATOTEK
+
+### Nadzor dostopa
+chown … nastavitev lastnika
+chgrp … nastavitev skupine
+
+sudo chown root:root superdog   -> naredi da je lastnih datoteke superdog root
+sudo chmod u+s superdog         -> s -> set user or group ID on execution
