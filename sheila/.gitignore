@@ -1,0 +1,5 @@
+cmake-build-debug/
+vhod.txt
+a.out
+.DS_Store
+.idea/
