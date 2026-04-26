@@ -1,0 +1,38 @@
+## PROCESI
+ps -> procesi
+pidof bash
+pgrep bash
+pstree             -> vidimo da se takoj na zacetku spawna en proces `systemd` kasneje pa vsi ostali
+htop
+echo $$
+echo $PPID
+echo $$BASHPID
+
+ls -R / &            -> izvaja se v ozadju         drugi terminal: pidof ls;          kill `dobljen_pid`
+
+pgrep bash;            cd /proc/dobljen_pid;   ls -l          -> vidimo npr. da exe kaze na /usr/bin/bash
+
+cd $(pidof bash)
+
+/proc/pid
+ls -l fd
+
+
+## SISTEMSKI KLIC fork()
+int pid = fork();
+if(pid < 0) perror(argv[0]);
+else if(pid == 0) printf("sem otrok %d s starsem %d\n", getpid(), getppid());
+else printf("sem stars %d z otrokom %d", getpid(), pid);
+
+### exec[lv][pPe]?(...)
+Sistemski klic exec[lv][pPe]?(…)
+• podamo pot do izvršljive datoteke oz. ukaza
+• pripone
+    • l – argumenti ukaza so podani
+    kot argumenti funkcije
+    • v – argumenti ukaza so podani
+    posebej v tabeli
+    • p – uporaba $PATH pri iskanju
+    izvršljive datoteke
+    • P – podamo tudi iskalno pot
+    • e – okoljske spremenljivke so podane v tabeli
