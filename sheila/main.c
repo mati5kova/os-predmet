@@ -104,6 +104,7 @@ void emit_token(int32_t symbol_start, int32_t symbol_end, TokenType tt, const ui
 static inline bool is_word_char(uint8_t c);
 void lexer(const uint8_t* buffer, TokenList* token_list);
 void parser(const TokenList* token_list);
+static uint8_t* expand_tilde(const uint8_t* str);
 
 int32_t argument_count(uint8_t** args);
 void free_command(const Command* cmd);
@@ -222,6 +223,29 @@ void free_command(const Command* cmd) {
 
 static inline bool is_word_char(const uint8_t c) {
     return isgraph(c) || c > 127;
+}
+
+static uint8_t* expand_tilde(const uint8_t* str) {
+    if (str[0] != '~')
+    {
+        return (uint8_t*)strdup((const char*)str);
+    }
+
+    const uint8_t* home = (uint8_t*)getenv("HOME");
+    if (home == NULL)
+    {
+        return (uint8_t*)strdup((const char*)str);
+    }
+
+    if (strlen((const char*)str) > 1 && (str[1] == '\0' || str[1] == '/')) {
+        // "~" ali "~/xyz"
+        char* result = malloc(strlen((const char*)home) + strlen((const char*)str));
+        strcpy(result, (const char*)home);
+        strcat(result, (const char*)str + 1);  // skip ~
+        return (uint8_t*)result;
+    }
+
+    return (uint8_t*)strdup((const char*)str);  // ~xyz - ni handlano
 }
 
 // -- lexer ----------------------------------------------------
@@ -376,7 +400,7 @@ Command build_command(const TokenList* token_list) {
         switch (token_list->tokens[i].type)
         {
         case TOKEN_SYMBOL:
-            cmd.args[count++] = (uint8_t*)strdup((const char*)token_list->tokens[i].str_val);
+            cmd.args[count++] = expand_tilde(token_list->tokens[i].str_val); // poglej ce se ustreza pogojem za expand "~" drugace handlaj normalno
             break;
         case TOKEN_REDIRECT_INPUT:
             cmd.redirect_in = (uint8_t*)strdup((const char*)token_list->tokens[i].str_val+1); // +1 => minus >/<
@@ -453,6 +477,7 @@ int32_t builtin_prompt(uint8_t** args) {
 
 int32_t builtin_status(uint8_t** args) {
     printf("%d\n", LAST_EXIT_STATUS);
+    (void)args;
     return LAST_EXIT_STATUS;
 }
 
@@ -480,6 +505,7 @@ int32_t builtin_exit(uint8_t** args) {
 
 int32_t builtin_help(uint8_t** args) {
     printf("CURRENT COMMANDS: debug, prompt, status, exit, help\n");
+    (void)args;
     return 0;
 }
 
