@@ -31,6 +31,8 @@
 // ============================================================
 #define INPUT_BUFFER_SIZE 4096
 #define CWD_MAXLEN 256
+#define LINKREAD_MAXLEN 256
+#define CPCAT_BUFF_MAXLEN 4096
 #define SHELL_NAME_AND_INTIAL_PROMPT "mysh"
 
 #define INITIAL_DEBUG_LVL 0
@@ -91,6 +93,7 @@ bool IS_INTERACTIVE = false;
 int32_t DEBUG_LVL = INITIAL_DEBUG_LVL;
 int32_t LAST_EXIT_STATUS = 0;
 uint8_t* PROMPT = (uint8_t*)SHELL_NAME_AND_INTIAL_PROMPT;
+bool PROMPT_IS_HEAP = false;
 
 // ============================================================
 // FUNCTION PROTOTYPES
@@ -127,6 +130,15 @@ int32_t builtin_dirmk(uint8_t** args);
 int32_t builtin_dirrm(uint8_t** args);
 int32_t builtin_dirls(uint8_t** args);
 
+int32_t builtin_rename(uint8_t** args);
+int32_t builtin_unlink(uint8_t** args);
+int32_t builtin_remove(uint8_t** args);
+int32_t builtin_linkhard(uint8_t** args);
+int32_t builtin_linksoft(uint8_t** args);
+int32_t builtin_linkread(uint8_t** args);
+int32_t builtin_linklist(uint8_t** args);
+int32_t builtin_cpcat(uint8_t** args);
+
 // ============================================================
 // BUILTIN DISPATCH TABLE
 // ============================================================
@@ -148,6 +160,14 @@ static const Builtin BUILTINS[] = {
     { "dirmk",   builtin_dirmk},
     { "dirrm",   builtin_dirrm},
     { "dirls",   builtin_dirls},
+    {"rename",   builtin_rename},
+    {"unlink",   builtin_unlink},
+    {"remove",   builtin_remove},
+    {"linkhard", builtin_linkhard},
+    {"linksoft", builtin_linksoft},
+    {"linkread", builtin_linkread},
+    {"linklist", builtin_linklist},
+    {"cpcat",    builtin_cpcat},
 };
 static const int32_t BUILTIN_COUNT = sizeof(BUILTINS) / sizeof(BUILTINS[0]);
 
@@ -419,11 +439,10 @@ int32_t builtin_prompt(uint8_t** args) {
         {
             return 1;
         }
-        if (strcmp((const char*)PROMPT, SHELL_NAME_AND_INTIAL_PROMPT) != 0)
-        {
-            free(PROMPT);
-        }
+
+        if (PROMPT_IS_HEAP) free(PROMPT);
         PROMPT = (uint8_t*)strdup((const char*)args[1]);
+        PROMPT_IS_HEAP = true;
     } else
     {
         printf("%s\n", (char*)PROMPT);
@@ -679,7 +698,13 @@ int32_t builtin_dirwd(uint8_t** args) {
     }
 
     uint8_t* cwd = malloc(CWD_MAXLEN * sizeof(uint8_t));
-    getcwd((char*)cwd, CWD_MAXLEN);
+    if (getcwd((char*)cwd, CWD_MAXLEN) == NULL)
+    {
+        const int32_t saved_errno = errno;
+        perror("dirwd");
+        free(cwd);
+        return saved_errno;
+    }
 
     if (base_mode)
     {
@@ -703,7 +728,7 @@ int32_t builtin_dirmk(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            fprintf(stderr, "Usage dirmk <dir>\n");
+            fprintf(stderr, "Usage: dirmk <dir>\n");
         }
         return 1;
     }
@@ -723,7 +748,7 @@ int32_t builtin_dirrm(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            fprintf(stderr, "Usage dirrm <dir>\n");
+            fprintf(stderr, "Usage: dirrm <dir>\n");
         }
         return 1;
     }
@@ -743,7 +768,7 @@ int32_t builtin_dirls(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            fprintf(stderr, "Usage dirls <?dir>\n");
+            fprintf(stderr, "Usage: dirls <?dir>\n");
         }
         return 1;
     }
@@ -763,13 +788,11 @@ int32_t builtin_dirls(uint8_t** args) {
         perror("dirls");
         return saved_errno;
     }
-    struct dirent* file;
-    struct stat stats;
 
     while (1)
     {
         errno = 0;
-        file = readdir(dir);
+        struct dirent* file = readdir(dir);
         if (file == NULL)
         {
             if (errno != 0)
@@ -793,6 +816,288 @@ int32_t builtin_dirls(uint8_t** args) {
         return saved_errno;
     }
 
+    return 0;
+}
+
+int32_t builtin_rename(uint8_t** args) {
+    if (argument_count(args) < 3)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: rename <old> <new>\n");
+        }
+        return 1;
+    }
+
+    if (rename((const char*)args[1], (const char*)args[2]) < 0)
+    {
+        const int32_t saved_errno = errno;
+        perror("rename");
+        return saved_errno;
+    }
+
+    return 0;
+}
+
+int32_t builtin_unlink(uint8_t** args) {
+    if (argument_count(args) < 2)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: unlink <name>\n");
+        }
+        return 1;
+    }
+
+    if (unlink((const char*)args[1]) < 0)
+    {
+        const int32_t saved_errno = errno;
+        perror("unlink");
+        return saved_errno;
+    }
+
+    return 0;
+}
+
+int32_t builtin_remove(uint8_t** args) {
+    if (argument_count(args) < 2)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: remove <name>\n");
+        }
+        return 1;
+    }
+
+    if (remove((const char*)args[1]) < 0)
+    {
+        const int32_t saved_errno = errno;
+        perror("remove");
+        return saved_errno;
+    }
+
+    return 0;
+}
+
+int32_t builtin_linkhard(uint8_t** args) {
+    if (argument_count(args) < 3)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: linkhard <dst> <name>\n");
+        }
+        return 1;
+    }
+
+    if (link((const char*)args[1], (const char*)args[2]) < 0)
+    {
+        const int32_t saved_errno = errno;
+        perror("linkhard");
+        return saved_errno;
+    }
+
+    return 0;
+}
+
+int32_t builtin_linksoft(uint8_t** args) {
+    if (argument_count(args) < 3)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: linksoft <dst> <name>\n");
+        }
+        return 1;
+    }
+
+    if (symlink((const char*)args[1], (const char*)args[2]) < 0)
+    {
+        const int32_t saved_errno = errno;
+        perror("linksoft");
+        return saved_errno;
+    }
+
+    return 0;
+}
+
+int32_t builtin_linkread(uint8_t** args) {
+    if (argument_count(args) < 2)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: linkread <name>\n");
+        }
+        return 1;
+    }
+
+    int32_t saved_errno = 0;
+
+    uint8_t* buff = malloc(LINKREAD_MAXLEN * sizeof(uint8_t));
+    if (buff == NULL)
+    {
+        saved_errno = errno;
+        perror("malloc");
+        return saved_errno;
+    }
+
+    int32_t read_bytes = 0;
+    if ((read_bytes = (int32_t)readlink((const char*)args[1], (char*)buff, LINKREAD_MAXLEN)) < 0)
+    {
+        saved_errno = errno;
+        perror("linkread");
+        free(buff);
+        return saved_errno;
+    }
+
+    printf("%.*s\n", read_bytes, (const char*)buff);
+
+    free(buff);
+    return 0;
+}
+
+int32_t builtin_linklist(uint8_t** args) {
+    if (argument_count(args) < 2)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: linklist <name>\n");
+        }
+        return 1;
+    }
+
+    int32_t saved_errno = 0;
+
+    struct stat target_stat;
+
+    if (stat((const char*)args[1], &target_stat) < 0)
+    {
+        saved_errno = errno;
+        perror("linklist");
+        return saved_errno;
+    }
+
+    DIR* dir = opendir(".");
+    if (dir == NULL)
+    {
+        saved_errno = errno;
+        perror("linklist");
+        return saved_errno;
+    }
+
+    while (1)
+    {
+        errno = 0;
+        const struct dirent* file = readdir(dir);
+        if (file == NULL)
+        {
+            if (errno != 0)
+            {
+                saved_errno = errno;
+                perror("linklist");
+                const int32_t close_dir_status = closedir(dir);
+                if (close_dir_status != 0)
+                {
+                    saved_errno = errno;
+                    perror("linklist");
+                    return saved_errno;
+                }
+                return saved_errno;
+            }
+            break;
+        }
+
+        struct stat s;
+        if (stat(file->d_name, &s) < 0)
+        {
+            saved_errno = errno;
+            perror("linklist");
+            const int32_t close_dir_status = closedir(dir);
+            if (close_dir_status != 0)
+            {
+                saved_errno = errno;
+                perror("linklist");
+                return saved_errno;
+            }
+            return saved_errno;
+        }
+        //printf("%s:[%llu]  ", file->d_name, s.st_ino); // st_ino[o] = 31006706
+        if (s.st_ino == target_stat.st_ino)
+        {
+            printf("%s  ", file->d_name);
+        }
+    }
+    printf("\n");
+
+    const int32_t close_dir_status = closedir(dir);
+    if (close_dir_status != 0)
+    {
+        saved_errno = errno;
+        perror("linklist");
+        return saved_errno;
+    }
+
+    return 0;
+}
+
+int32_t builtin_cpcat(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: cpcat <src?> <dst?>\n");
+        }
+        return 1;
+    }
+
+    int32_t src = STDIN_FILENO;
+    int32_t dst = STDOUT_FILENO;
+    const int32_t arg_cnt = argument_count(args);
+    int32_t saved_errno = 0;
+
+    // source
+    if (arg_cnt > 1)
+    {
+        if (strcmp((const char*)args[1], "-") != 0)
+        {
+            src = open((const char*)args[1], O_RDONLY);
+            if (src < 0)
+            {
+                saved_errno = errno;
+                perror("cpcat");
+                return saved_errno;
+            }
+        }
+    }
+    // destination
+    if (arg_cnt > 2)
+    {
+        dst = open((const char*)args[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (dst < 0)
+        {
+            saved_errno = errno;
+            perror("cpcat");
+            if (src != STDIN_FILENO)  close(src);
+            return  saved_errno;
+        }
+    }
+
+    uint8_t* buff = malloc(CPCAT_BUFF_MAXLEN * sizeof(uint8_t));
+    if (buff == NULL)
+    {
+        saved_errno = errno;
+        if (src != STDIN_FILENO)  close(src);
+        if (dst != STDOUT_FILENO) close(dst);
+        return saved_errno;
+    }
+    ssize_t read_bytes = 0;
+    while ((read_bytes = read(src, buff, CPCAT_BUFF_MAXLEN)) > 0)
+    {
+        write(dst, buff, read_bytes);
+    }
+
+    if (src != STDIN_FILENO)  close(src);
+    if (dst != STDOUT_FILENO) close(dst);
+
+    free(buff);
     return 0;
 }
 
@@ -836,16 +1141,15 @@ int main(const int argc, char* argv[]) {
 
     const FILE* input;
 
-    if (IS_INTERACTIVE) {
+    if (IS_INTERACTIVE || argc < 2) {
         input = stdin;
-    } else if (argc >= 2) {
+    } else
+    {
         input = fopen(argv[1], "r");
         if (input == NULL) {
             perror("Error opening file");
             exit(1);
         }
-    } else {
-        input = stdin; // piped or redirected
     }
 
     print_shell();
