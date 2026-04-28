@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <termios.h>
+#include <sys/utsname.h>
 
 // ============================================================
 // MACROS/FEATURES
@@ -144,6 +145,14 @@ int32_t builtin_linkread(uint8_t** args);
 int32_t builtin_linklist(uint8_t** args);
 int32_t builtin_cpcat(uint8_t** args);
 
+int32_t builtin_pid(uint8_t** args);
+int32_t builtin_ppid(uint8_t** args);
+int32_t builtin_uid(uint8_t** args);
+int32_t builtin_euid(uint8_t** args);
+int32_t builtin_gid(uint8_t** args);
+int32_t builtin_egid(uint8_t** args);
+int32_t builtin_sysinfo(uint8_t** args);
+
 // ============================================================
 // BUILTIN DISPATCH TABLE
 // ============================================================
@@ -173,6 +182,13 @@ static const Builtin BUILTINS[] = {
     {"linkread", builtin_linkread},
     {"linklist", builtin_linklist},
     {"cpcat",    builtin_cpcat},
+    {"pid",      builtin_pid},
+    {"ppid",     builtin_ppid},
+    {"uid",      builtin_uid},
+    {"euid",     builtin_euid},
+    {"gid",      builtin_gid},
+    {"egid",     builtin_egid},
+    {"sysinfo",  builtin_sysinfo},
 };
 static const int32_t BUILTIN_COUNT = sizeof(BUILTINS) / sizeof(BUILTINS[0]);
 
@@ -1227,6 +1243,129 @@ int32_t builtin_cpcat(uint8_t** args) {
     if (dst != STDOUT_FILENO) close(dst);
 
     free(buff);
+    return 0;
+}
+
+int32_t builtin_pid(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("pid");
+        }
+        return 1;
+    }
+
+    printf("%d\n", getpid());
+
+    return 0;
+}
+
+int32_t builtin_ppid(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("ppid");
+        }
+        return 1;
+    }
+
+    printf("%d\n", getppid());
+
+    return 0;
+}
+
+int32_t builtin_uid(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("uid");
+        }
+        return 1;
+    }
+
+    printf("%d\n", getuid());
+
+    return 0;
+}
+
+int32_t builtin_euid(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("euid");
+        }
+        return 1;
+    }
+
+    printf("%d\n", geteuid());
+
+    return 0;
+}
+
+int32_t builtin_gid(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("gid");
+        }
+        return 1;
+    }
+
+    printf("%d\n", getgid());
+
+    return 0;
+}
+
+int32_t builtin_egid(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("egid");
+        }
+        return 1;
+    }
+
+    printf("%d\n", getegid());
+
+    return 0;
+}
+
+int32_t builtin_sysinfo(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("sysinfo");
+        }
+        return 1;
+    }
+
+    struct utsname u;
+    if (uname(&u) < 0)
+    {
+        const int32_t saved_errno = errno;
+        perror("sysinfo");
+        return saved_errno;
+    }
+
+    printf(
+        "Sysname: %s\n"
+        "Nodename: %s\n"
+        "Release: %s\n"
+        "Version: %s\n"
+        "Machine: %s\n",
+        u.sysname,
+        u.nodename,
+        u.release,
+        u.version,
+        u.machine);
+
     return 0;
 }
 
