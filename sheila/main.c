@@ -37,6 +37,8 @@
 #define CPCAT_BUFF_MAXLEN 4096
 #define SHELL_NAME_AND_INTIAL_PROMPT "mysh"
 #define HISTORY_MAXLEN 16
+#define PROCFS_DEFAULT_PATH "/proc"
+#define PIDS_ARR_INITIAL_CAPACITY 8
 
 #define INITIAL_DEBUG_LVL 0
 #define DEEP_DEBUG_MODE 9 // extreme debug mode, dev only
@@ -99,6 +101,8 @@ uint8_t* PROMPT = (uint8_t*)SHELL_NAME_AND_INTIAL_PROMPT;
 bool PROMPT_IS_HEAP = false;
 uint8_t* HISTORY[HISTORY_MAXLEN] = {0};
 uint32_t HISTORY_POSITION = 0;
+uint8_t* PROCFS_PATH = (uint8_t*)PROCFS_DEFAULT_PATH;
+bool PROCFS_PATH_IS_HEAP = false;
 
 // ============================================================
 // FUNCTION PROTOTYPES
@@ -110,6 +114,7 @@ static inline bool is_word_char(uint8_t c);
 void lexer(const uint8_t* buffer, TokenList* token_list);
 void parser(const TokenList* token_list);
 static uint8_t* expand_tilde(const uint8_t* str);
+static int32_t comp_asc_int32_t(const void* a, const void* b);
 
 int32_t argument_count(uint8_t** args);
 void free_command(const Command* cmd);
@@ -153,6 +158,10 @@ int32_t builtin_gid(uint8_t** args);
 int32_t builtin_egid(uint8_t** args);
 int32_t builtin_sysinfo(uint8_t** args);
 
+int32_t builtin_proc(uint8_t** args);
+int32_t builtin_pids(uint8_t** args);
+int32_t builtin_pinfo(uint8_t** args);
+
 // ============================================================
 // BUILTIN DISPATCH TABLE
 // ============================================================
@@ -189,6 +198,9 @@ static const Builtin BUILTINS[] = {
     {"gid",      builtin_gid},
     {"egid",     builtin_egid},
     {"sysinfo",  builtin_sysinfo},
+    {"proc",     builtin_proc},
+    {"pids",     builtin_pids},
+    {"pinfo",    builtin_pinfo},
 };
 static const int32_t BUILTIN_COUNT = sizeof(BUILTINS) / sizeof(BUILTINS[0]);
 
@@ -219,7 +231,7 @@ static void enable_raw_mode(void) {
 }
 
 static int32_t read_line_interactive(uint8_t* buf, int32_t maxlen) {
-    int32_t accomulated_len = 0;
+    int32_t accumulated_len = 0;
     int32_t hist_idx = (int32_t)HISTORY_POSITION;
     memset(buf, 0, maxlen);
 
@@ -229,18 +241,18 @@ static int32_t read_line_interactive(uint8_t* buf, int32_t maxlen) {
 
         // rocno handlanje: polsji ukaz
         if (c == '\n' || c == '\r') {
-            buf[accomulated_len++] = '\n';
-            buf[accomulated_len]   = '\0';
+            buf[accumulated_len++] = '\n';
+            buf[accumulated_len]   = '\0';
             write(STDOUT_FILENO, "\n", 1);
-            return accomulated_len;
+            return accumulated_len;
         }
 
         // backspace
         if (c == 127 || c == 8) {
-            if (accomulated_len > 0)
+            if (accumulated_len > 0)
             {
-                accomulated_len--;
-                buf[accomulated_len] = '\0';
+                accumulated_len--;
+                buf[accumulated_len] = '\0';
                 // clear char logika je <move back, print space, move back>
                 write(STDOUT_FILENO, "\b \b", 3);
             }
@@ -259,32 +271,32 @@ static int32_t read_line_interactive(uint8_t* buf, int32_t maxlen) {
             const int32_t new_idx = hist_idx + (seq[1] == 'A' ? -1 : seq[1] == 'B' ? 1 : 0);
             if (new_idx < 0 || new_idx > (int32_t)HISTORY_POSITION) continue;
 
-            for (int32_t i = 0; i < accomulated_len; i++) write(STDOUT_FILENO, "\b \b", 3);
+            for (int32_t i = 0; i < accumulated_len; i++) write(STDOUT_FILENO, "\b \b", 3);
 
             hist_idx = new_idx;
             if (hist_idx == (int32_t)HISTORY_POSITION) {
-                accomulated_len = 0; buf[0] = '\0';
+                accumulated_len = 0; buf[0] = '\0';
             } else {
                 const uint8_t* entry = HISTORY[hist_idx % HISTORY_MAXLEN];
-                accomulated_len = (int32_t)strlen((const char*)entry);
-                if (accomulated_len > 0 && entry[accomulated_len-1] == '\n')
+                accumulated_len = (int32_t)strlen((const char*)entry);
+                if (accumulated_len > 0 && entry[accumulated_len-1] == '\n')
                 {
-                    accomulated_len--;
+                    accumulated_len--;
                 }
-                if (accomulated_len >= maxlen - 1)
+                if (accumulated_len >= maxlen - 1)
                 {
-                    accomulated_len = maxlen - 2;
+                    accumulated_len = maxlen - 2;
                 }
-                memcpy(buf, entry, accomulated_len);
-                buf[accomulated_len] = '\0';
+                memcpy(buf, entry, accumulated_len);
+                buf[accumulated_len] = '\0';
             }
-            write(STDOUT_FILENO, buf, accomulated_len);
+            write(STDOUT_FILENO, buf, accumulated_len);
             continue;
         }
 
-        if (accomulated_len < maxlen - 2) {
-            buf[accomulated_len++] = c;
-            buf[accomulated_len] = '\0';
+        if (accumulated_len < maxlen - 2) {
+            buf[accumulated_len++] = c;
+            buf[accumulated_len] = '\0';
             write(STDOUT_FILENO, &c, 1);
         }
     }
@@ -365,6 +377,12 @@ static uint8_t* expand_tilde(const uint8_t* str) {
     }
 
     return (uint8_t*)strdup((const char*)str);  // ~xyz - ni handlano
+}
+
+static int32_t comp_asc_int32_t(const void* a, const void* b) {
+    const int32_t x = *(const int32_t*)a;
+    const int32_t y = *(const int32_t*)b;
+    return (x > y) - (x < y);
 }
 
 // -- lexer ----------------------------------------------------
@@ -664,7 +682,7 @@ int32_t builtin_sum(uint8_t** args) {
         }
         sum += num;
     }
-    printf("%lld\n", sum);
+    printf("%lld\n", (long long int)sum);
     return 0;
 }
 
@@ -715,7 +733,7 @@ int32_t builtin_calc(uint8_t** args) {
         return 1;
     }
 
-    printf("%lld\n", result);
+    printf("%lld\n", (long long int)result);
     return 0;
 }
 
@@ -1251,7 +1269,7 @@ int32_t builtin_pid(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            perror("pid");
+            fprintf(stderr, "Usage: pid\n");
         }
         return 1;
     }
@@ -1266,7 +1284,7 @@ int32_t builtin_ppid(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            perror("ppid");
+            fprintf(stderr, "Usage: ppid\n");
         }
         return 1;
     }
@@ -1281,7 +1299,7 @@ int32_t builtin_uid(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            perror("uid");
+            fprintf(stderr, "Usage: uid\n");
         }
         return 1;
     }
@@ -1296,7 +1314,7 @@ int32_t builtin_euid(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            perror("euid");
+            fprintf(stderr, "Usage: euid\n");
         }
         return 1;
     }
@@ -1311,7 +1329,7 @@ int32_t builtin_gid(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            perror("gid");
+            fprintf(stderr, "Usage: gid\n");
         }
         return 1;
     }
@@ -1326,7 +1344,7 @@ int32_t builtin_egid(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            perror("egid");
+            fprintf(stderr, "Usage: egid\n");
         }
         return 1;
     }
@@ -1341,7 +1359,7 @@ int32_t builtin_sysinfo(uint8_t** args) {
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
-            perror("sysinfo");
+            fprintf(stderr, "Usage: sysinfo\n");
         }
         return 1;
     }
@@ -1365,6 +1383,171 @@ int32_t builtin_sysinfo(uint8_t** args) {
         u.release,
         u.version,
         u.machine);
+
+    return 0;
+}
+
+int32_t builtin_proc(uint8_t** args) {
+    const int32_t arg_cnt = argument_count(args);
+    if (arg_cnt == 0)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: proc <path?>\n");
+        }
+        return 1;
+    }
+    if (arg_cnt == 1)
+    {
+        printf("%s\n", (const char*)PROCFS_PATH);
+        return 0;
+    }
+
+    if (access((const char*)args[1], F_OK | R_OK) < 0)
+    {
+        const int32_t saved_errno = errno;
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("proc");
+            return saved_errno;
+        }
+        // za preverjanje perror ni potreben
+        return 1;
+    }
+
+    if (PROCFS_PATH_IS_HEAP) free(PROCFS_PATH);
+    PROCFS_PATH = (uint8_t*)strdup((const char*)args[1]);
+    PROCFS_PATH_IS_HEAP = true;
+
+    return 0;
+}
+
+static int32_t* collect_sorted_pids(int32_t* count) {
+    *count = 0;
+
+    DIR* dir = opendir((const char*)PROCFS_PATH);
+    if (dir == NULL)
+    {
+        perror("collect sorted pids");
+        return NULL;
+    }
+
+    int32_t capacity = PIDS_ARR_INITIAL_CAPACITY;
+    int32_t* pids = (int32_t*)malloc(capacity * sizeof(int32_t));
+    if (pids == NULL)
+    {
+        closedir(dir);
+        return NULL;
+    }
+
+    while (1) {
+        errno = 0;
+        const struct dirent* entry = readdir(dir);
+        if (entry == NULL) {
+            if (errno != 0) { perror("procfs"); free(pids); closedir(dir); return NULL; }
+            break;
+        }
+
+        bool is_pid = entry->d_name[0] != '\0';
+        for (size_t i = 0; entry->d_name[i] != '\0'; i++) {
+            if (!isdigit((unsigned char)entry->d_name[i]))
+            {
+                is_pid = false;
+                break;
+            }
+        }
+
+        if (is_pid) {
+            if (*count >= capacity) {
+                capacity *= 2;
+                int32_t* temp = realloc(pids, capacity * sizeof(int32_t));
+                if (temp == NULL)
+                {
+                    free(pids);
+                    closedir(dir);
+                    return NULL;
+                }
+                pids = temp;
+            }
+            pids[(*count)++] = (int32_t)strtol(entry->d_name, NULL, 10);
+        }
+    }
+
+    closedir(dir);
+
+    qsort(pids, *count, sizeof(pids[0]), comp_asc_int32_t);
+
+    return pids;
+}
+
+int32_t builtin_pids(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: pids\n");
+        }
+        return 1;
+    }
+
+    int32_t pids_count = 0;
+    int32_t* pids = collect_sorted_pids(&pids_count);
+    if (pids == NULL)
+    {
+        perror("pids");
+        return 1;
+    }
+
+    for (int32_t i = 0; i < pids_count; i++)
+    {
+        printf("%d\n", pids[i]);
+    }
+
+    free(pids);
+
+    return 0;
+}
+
+int32_t builtin_pinfo(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: pinfo\n");
+        }
+        return 1;
+    }
+
+    int32_t pids_count = 0;
+    int32_t* pids = collect_sorted_pids(&pids_count);
+    if (pids == NULL)
+    {
+        perror("pinfo");
+        return 1;
+    }
+
+    printf("%5s %5s %6s %s\n", "PID", "PPID", "STANJE", "IME");
+
+    for (int32_t i = 0; i < pids_count; i++)
+    {
+        uint8_t path[64];
+        snprintf((char*)path, sizeof(path), "%s/%d/stat", PROCFS_PATH, pids[i]);
+
+        FILE* f = fopen((const char*)path, "r");
+        if (f == NULL)
+        {
+            continue; // proces mogoce umru, ni nujno da je neki broken
+        }
+
+        int32_t pid, ppid;
+        uint8_t state, name[256];
+        fscanf(f, "%d (%255[^)]) %c %d", &pid, name, &state, &ppid);
+        fclose(f);
+
+        printf("%5d %5d %6c %s\n", pid, ppid, state, (const char*)name);
+    }
+
+    free(pids);
 
     return 0;
 }
