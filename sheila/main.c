@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <termios.h>
 
 // ============================================================
 // MACROS/FEATURES
@@ -34,6 +35,7 @@
 #define LINKREAD_MAXLEN 256
 #define CPCAT_BUFF_MAXLEN 4096
 #define SHELL_NAME_AND_INTIAL_PROMPT "mysh"
+#define HISTORY_MAXLEN 16
 
 #define INITIAL_DEBUG_LVL 0
 #define DEEP_DEBUG_MODE 9 // extreme debug mode, dev only
@@ -94,6 +96,8 @@ int32_t DEBUG_LVL = INITIAL_DEBUG_LVL;
 int32_t LAST_EXIT_STATUS = 0;
 uint8_t* PROMPT = (uint8_t*)SHELL_NAME_AND_INTIAL_PROMPT;
 bool PROMPT_IS_HEAP = false;
+uint8_t* HISTORY[HISTORY_MAXLEN] = {0};
+uint32_t HISTORY_POSITION = 0;
 
 // ============================================================
 // FUNCTION PROTOTYPES
@@ -173,6 +177,105 @@ static const Builtin BUILTINS[] = {
 static const int32_t BUILTIN_COUNT = sizeof(BUILTINS) / sizeof(BUILTINS[0]);
 
 // ============================================================
+// RAW MODE
+// ============================================================
+static struct termios ORIGINAL_TERMIOS;
+
+static void disable_raw_mode(void) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &ORIGINAL_TERMIOS);
+}
+
+static void enable_raw_mode(void) {
+    tcgetattr(STDIN_FILENO, &ORIGINAL_TERMIOS);
+    atexit(disable_raw_mode); // nujno, spomni se kaj je blo brez tega lol
+
+    struct termios raw = ORIGINAL_TERMIOS;
+    /*
+     * ECHO - disable echo - kernel ne izpisuje vec kar tipkas ampak je handlano v real_line_interactive
+     * ICANON - disable canonical input - kernel neha bufferat vrstice in vsak znak gre direktno v program
+     * IEXTEN - disable extended input char processing
+     */
+    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN);
+    raw.c_iflag &= ~(IXON | ICRNL); // IXON-enable start/stop output control, ICRNL-CRtoNL
+    raw.c_cc[VMIN]  = 1; // blokiraj dokler se ne pojavi tocno 1 byte
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+static int32_t read_line_interactive(uint8_t* buf, int32_t maxlen) {
+    int32_t accomulated_len = 0;
+    int32_t hist_idx = (int32_t)HISTORY_POSITION;
+    memset(buf, 0, maxlen);
+
+    while (1) {
+        uint8_t c;
+        if (read(STDIN_FILENO, &c, 1) <= 0) return 0;  // EOF
+
+        // rocno handlanje: polsji ukaz
+        if (c == '\n' || c == '\r') {
+            buf[accomulated_len++] = '\n';
+            buf[accomulated_len]   = '\0';
+            write(STDOUT_FILENO, "\n", 1);
+            return accomulated_len;
+        }
+
+        // backspace
+        if (c == 127 || c == 8) {
+            if (accomulated_len > 0)
+            {
+                accomulated_len--;
+                buf[accomulated_len] = '\0';
+                // clear char logika je <move back, print space, move back>
+                write(STDOUT_FILENO, "\b \b", 3);
+            }
+            continue;
+        }
+
+        // zacetek escape sekvence
+        if (c == '\033') {
+            uint8_t seq[2];
+            if (read(STDIN_FILENO, &seq[0], 1) != 1) continue;
+            if (read(STDIN_FILENO, &seq[1], 1) != 1) continue;
+
+            if (seq[0] != '[') continue;
+
+            // A -> nazaj zgodovina, B -> naprej (proti novejsemu) zgodovina
+            const int32_t new_idx = hist_idx + (seq[1] == 'A' ? -1 : seq[1] == 'B' ? 1 : 0);
+            if (new_idx < 0 || new_idx > (int32_t)HISTORY_POSITION) continue;
+
+            for (int32_t i = 0; i < accomulated_len; i++) write(STDOUT_FILENO, "\b \b", 3);
+
+            hist_idx = new_idx;
+            if (hist_idx == (int32_t)HISTORY_POSITION) {
+                accomulated_len = 0; buf[0] = '\0';
+            } else {
+                const uint8_t* entry = HISTORY[hist_idx % HISTORY_MAXLEN];
+                accomulated_len = (int32_t)strlen((const char*)entry);
+                if (accomulated_len > 0 && entry[accomulated_len-1] == '\n')
+                {
+                    accomulated_len--;
+                }
+                if (accomulated_len >= maxlen - 1)
+                {
+                    accomulated_len = maxlen - 2;
+                }
+                memcpy(buf, entry, accomulated_len);
+                buf[accomulated_len] = '\0';
+            }
+            write(STDOUT_FILENO, buf, accomulated_len);
+            continue;
+        }
+
+        if (accomulated_len < maxlen - 2) {
+            buf[accomulated_len++] = c;
+            buf[accomulated_len] = '\0';
+            write(STDOUT_FILENO, &c, 1);
+        }
+    }
+}
+
+
+// ============================================================
 // FUNCTION DEFINITIONS
 // ============================================================
 
@@ -237,11 +340,11 @@ static uint8_t* expand_tilde(const uint8_t* str) {
         return (uint8_t*)strdup((const char*)str);
     }
 
-    if (strlen((const char*)str) > 1 && (str[1] == '\0' || str[1] == '/')) {
+    if (str[1] == '\0' || str[1] == '/') {
         // "~" ali "~/xyz"
-        char* result = malloc(strlen((const char*)home) + strlen((const char*)str));
-        strcpy(result, (const char*)home);
-        strcat(result, (const char*)str + 1);  // skip ~
+        uint8_t* result = (uint8_t*)malloc(strlen((const char*)home) + strlen((const char*)str) + 1 + 1);
+        strcpy((char*)result, (const char*)home);
+        strcat((char*)result, (const char*)str + 1);  // skip ~
         return (uint8_t*)result;
     }
 
@@ -403,10 +506,10 @@ Command build_command(const TokenList* token_list) {
             cmd.args[count++] = expand_tilde(token_list->tokens[i].str_val); // poglej ce se ustreza pogojem za expand "~" drugace handlaj normalno
             break;
         case TOKEN_REDIRECT_INPUT:
-            cmd.redirect_in = (uint8_t*)strdup((const char*)token_list->tokens[i].str_val+1); // +1 => minus >/<
+            cmd.redirect_in = expand_tilde(token_list->tokens[i].str_val+1); // +1 => minus >/<
             break;
         case TOKEN_REDIRECT_OUTPUT:
-            cmd.redirect_out = (uint8_t*)strdup((const char*)token_list->tokens[i].str_val+1);
+            cmd.redirect_out = expand_tilde(token_list->tokens[i].str_val+1);
             break;
         case TOKEN_RUN_IN_BACKGROUND:
             cmd.run_in_bg = true;
@@ -1187,10 +1290,31 @@ int main(const int argc, char* argv[]) {
         exit(1);
     }
 
-    while (fgets((char*)buffer, INPUT_BUFFER_SIZE, (FILE*)input))
+    if (IS_INTERACTIVE) enable_raw_mode();
+
+    while (1)
     {
+        bool got_line = false;
+        if (IS_INTERACTIVE)
+        {
+            const int32_t n = read_line_interactive(buffer, INPUT_BUFFER_SIZE);
+            if (n <= 0) break;
+            got_line = true;
+        } else
+        {
+            got_line = (fgets((char*)buffer, INPUT_BUFFER_SIZE, (FILE*)input) != NULL);
+        }
+        if (!got_line) break;
+
+
         TokenList token_list = {0};
         token_list.input_line = buffer;
+
+        // zgodovina
+        const uint32_t slot = HISTORY_POSITION % HISTORY_MAXLEN;
+        free(HISTORY[slot]);
+        HISTORY[slot] = (uint8_t*)strdup((const char*)buffer);
+        HISTORY_POSITION++;
 
         lexer(buffer, &token_list);
 
@@ -1240,7 +1364,6 @@ int main(const int argc, char* argv[]) {
 
         execute(&token_list);
 
-
         // cleanup after this command
         for (int32_t i = 0; i < token_list.count; i++)
         {
@@ -1256,7 +1379,14 @@ int main(const int argc, char* argv[]) {
     {
         fclose((FILE*)input);
     }
+
     free(buffer);
+
+    const uint32_t filled = MIN(HISTORY_POSITION, HISTORY_MAXLEN);
+    for (uint32_t i = 0; i < filled; i++)
+    {
+        free(HISTORY[i]);
+    }
 
     exit(LAST_EXIT_STATUS);
 }
