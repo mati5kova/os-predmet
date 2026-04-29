@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <termios.h>
 #include <sys/utsname.h>
+#include <sys/wait.h>
 
 // ============================================================
 // MACROS/FEATURES
@@ -1552,6 +1553,50 @@ int32_t builtin_pinfo(uint8_t** args) {
     return 0;
 }
 
+int32_t execute_external(const Command* cmd) {
+    const pid_t pid = fork();
+    int32_t wstatus = 0;
+
+    if (pid < 0)
+    {
+        int32_t saved_errno = errno;
+        perror("execute external");
+        return saved_errno;
+    } else if (pid > 0) // parent
+    {
+        if (cmd->run_in_bg) // izvedba v ozadju
+        {
+            if (DEBUG_LVL == DEEP_DEBUG_MODE)
+            {
+                printf("[background pid %d]\n", pid);
+            }
+            return 0;
+        } else
+        {
+            if(waitpid(pid, &wstatus, 0) != pid)
+            {
+                perror("waitpid");
+                return 127;
+            }
+
+            if (WIFEXITED(wstatus))
+            {
+                return (int32_t)WEXITSTATUS(wstatus);
+            } else if (WIFSIGNALED(wstatus))
+            {
+                return 128 + WTERMSIG(wstatus);
+            }
+        }
+    } else // child
+    {
+        execvp((const char*)cmd->args[0], (char* const*)cmd->args);
+        perror("exec");
+        _exit(127);
+    }
+
+    return 0;
+}
+
 int32_t execute(const TokenList* token_list) {
     if (token_list->count == 0 || token_list->tokens[0].type == TOKEN_EOF) return 0;
 
@@ -1574,6 +1619,9 @@ int32_t execute(const TokenList* token_list) {
         print_command_args(cmd.args, 0, (uint8_t*)" ", false);
         printf("'\n");
 #endif
+
+        ret_status = execute_external(&cmd);
+
     }
 
     if (!cmd.run_in_bg)
