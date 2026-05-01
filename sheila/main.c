@@ -122,6 +122,10 @@ void free_command(const Command* cmd);
 Command build_command(const TokenList* token_list);
 builtin_fn find_builtin(const uint8_t* command_str);
 
+int32_t execute(const TokenList* token_list);
+int32_t execute_builtin(const Command* cmd, builtin_fn fn);
+int32_t execute_external(const Command* cmd);
+
 int32_t builtin_debug(uint8_t** args);
 int32_t builtin_prompt(uint8_t** args);
 int32_t builtin_status(uint8_t** args);
@@ -163,6 +167,9 @@ int32_t builtin_proc(uint8_t** args);
 int32_t builtin_pids(uint8_t** args);
 int32_t builtin_pinfo(uint8_t** args);
 
+int32_t builtin_waitone(uint8_t** args);
+int32_t builtin_waitall(uint8_t** args);
+
 // ============================================================
 // BUILTIN DISPATCH TABLE
 // ============================================================
@@ -202,107 +209,10 @@ static const Builtin BUILTINS[] = {
     {"proc",     builtin_proc},
     {"pids",     builtin_pids},
     {"pinfo",    builtin_pinfo},
+    {"waitone",  builtin_waitone},
+    {"waitall",  builtin_waitall},
 };
 static const int32_t BUILTIN_COUNT = sizeof(BUILTINS) / sizeof(BUILTINS[0]);
-
-// ============================================================
-// RAW MODE
-// ============================================================
-static struct termios ORIGINAL_TERMIOS;
-
-static void disable_raw_mode(void) {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &ORIGINAL_TERMIOS);
-}
-
-static void enable_raw_mode(void) {
-    tcgetattr(STDIN_FILENO, &ORIGINAL_TERMIOS);
-    atexit(disable_raw_mode); // nujno, spomni se kaj je blo brez tega lol
-
-    struct termios raw = ORIGINAL_TERMIOS;
-    /*
-     * ECHO - disable echo - kernel ne izpisuje vec kar tipkas ampak je handlano v real_line_interactive
-     * ICANON - disable canonical input - kernel neha bufferat vrstice in vsak znak gre direktno v program
-     * IEXTEN - disable extended input char processing
-     */
-    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN);
-    raw.c_iflag &= ~(IXON | ICRNL); // IXON-enable start/stop output control, ICRNL-CRtoNL
-    raw.c_cc[VMIN]  = 1; // blokiraj dokler se ne pojavi tocno 1 byte
-    raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-}
-
-static int32_t read_line_interactive(uint8_t* buf, int32_t maxlen) {
-    int32_t accumulated_len = 0;
-    int32_t hist_idx = (int32_t)HISTORY_POSITION;
-    memset(buf, 0, maxlen);
-
-    while (1) {
-        uint8_t c;
-        if (read(STDIN_FILENO, &c, 1) <= 0) return 0;  // EOF
-
-        // rocno handlanje: polsji ukaz
-        if (c == '\n' || c == '\r') {
-            buf[accumulated_len++] = '\n';
-            buf[accumulated_len]   = '\0';
-            write(STDOUT_FILENO, "\n", 1);
-            return accumulated_len;
-        }
-
-        // backspace
-        if (c == 127 || c == 8) {
-            if (accumulated_len > 0)
-            {
-                accumulated_len--;
-                buf[accumulated_len] = '\0';
-                // clear char logika je <move back, print space, move back>
-                write(STDOUT_FILENO, "\b \b", 3);
-            }
-            continue;
-        }
-
-        // zacetek escape sekvence
-        if (c == '\033') {
-            uint8_t seq[2];
-            if (read(STDIN_FILENO, &seq[0], 1) != 1) continue;
-            if (read(STDIN_FILENO, &seq[1], 1) != 1) continue;
-
-            if (seq[0] != '[') continue;
-
-            // A -> nazaj zgodovina, B -> naprej (proti novejsemu) zgodovina
-            const int32_t new_idx = hist_idx + (seq[1] == 'A' ? -1 : seq[1] == 'B' ? 1 : 0);
-            if (new_idx < 0 || new_idx > (int32_t)HISTORY_POSITION) continue;
-
-            for (int32_t i = 0; i < accumulated_len; i++) write(STDOUT_FILENO, "\b \b", 3);
-
-            hist_idx = new_idx;
-            if (hist_idx == (int32_t)HISTORY_POSITION) {
-                accumulated_len = 0; buf[0] = '\0';
-            } else {
-                const uint8_t* entry = HISTORY[hist_idx % HISTORY_MAXLEN];
-                accumulated_len = (int32_t)strlen((const char*)entry);
-                if (accumulated_len > 0 && entry[accumulated_len-1] == '\n')
-                {
-                    accumulated_len--;
-                }
-                if (accumulated_len >= maxlen - 1)
-                {
-                    accumulated_len = maxlen - 2;
-                }
-                memcpy(buf, entry, accumulated_len);
-                buf[accumulated_len] = '\0';
-            }
-            write(STDOUT_FILENO, buf, accumulated_len);
-            continue;
-        }
-
-        if (accumulated_len < maxlen - 2) {
-            buf[accumulated_len++] = c;
-            buf[accumulated_len] = '\0';
-            write(STDOUT_FILENO, &c, 1);
-        }
-    }
-}
-
 
 // ============================================================
 // FUNCTION DEFINITIONS
@@ -614,31 +524,34 @@ int32_t builtin_prompt(uint8_t** args) {
 }
 
 int32_t builtin_status(uint8_t** args) {
-    printf("%d\n", LAST_EXIT_STATUS);
     (void)args;
+    printf("%d\n", LAST_EXIT_STATUS);
     return LAST_EXIT_STATUS;
 }
 
 int32_t builtin_exit(uint8_t** args) {
-    uint8_t* end;
-    const int32_t arg_cnt = argument_count(args);
-    if (arg_cnt > 1)
-    {
-        const int32_t status = (int32_t)strtol((const char*)args[1], (char**)&end, 10);
-        if (end == args[1] || *end != '\0' || errno == ERANGE)
-        {
-            if (DEBUG_LVL == DEEP_DEBUG_MODE)
-            {
-                fprintf(stderr, "Invalid exit status for built-in `exit`, expected (positive) number, got %s\n", (char*)args[1]);
-            }
-            LAST_EXIT_STATUS = -1;
-        } else
-        {
-            LAST_EXIT_STATUS = status;
+    /*
+     * za nalogo 3.4 je prislo do spremembe delovanja `builtin_exit`
+     * prej je direktno tukaj bil exit() klican ampak ni pravilno delovalo za
+     * drugi testni primer od 3.4 ko je slo za izvajanje builtin ukazov v ozadju (predvsem exit)
+     * `builtin_exit` zdaj vrne pravi status namesto exit -> ta se zgodi znotraj `execute`
+     */
+    int32_t status = LAST_EXIT_STATUS;
+
+    if (argument_count(args) > 1) {
+        char* end = NULL;
+        errno = 0;
+
+        long value = strtol((const char*)args[1], &end, 10);
+
+        if (end == (char*)args[1] || *end != '\0' || errno == ERANGE) {
+            status = -1;
+        } else {
+            status = (int32_t)value;
         }
     }
 
-    exit(LAST_EXIT_STATUS);
+    return status;
 }
 
 int32_t builtin_help(uint8_t** args) {
@@ -1553,6 +1466,94 @@ int32_t builtin_pinfo(uint8_t** args) {
     return 0;
 }
 
+int32_t builtin_waitone(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: waitone <pid?>\n");
+        }
+        return 1;
+    }
+
+    pid_t target = -1;
+    if (argument_count(args) > 1) {
+        target = (pid_t)strtol((const char*)args[1], NULL, 10);
+    }
+
+    int32_t wstatus;
+    if (waitpid(target, &wstatus, 0) < 0) {
+        const int32_t saved_errno = errno;
+        if (saved_errno == ECHILD) // otrok trenutnega procesa s pidom `target` ne obstaja
+        {
+            return 0;
+        }
+        perror("waitone");
+        return saved_errno;
+    }
+
+    if (WIFEXITED(wstatus))
+    {
+        return (int32_t)WEXITSTATUS(wstatus);
+    } else if (WIFSIGNALED(wstatus))
+    {
+        return 128 + WTERMSIG(wstatus);
+    }
+
+    return 1;
+}
+
+int32_t builtin_waitall(uint8_t** args) {
+    if (args == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: waitall\n");
+        }
+        return 1;
+    }
+
+    while (1) {
+        int32_t wstatus;
+        if (waitpid(-1, &wstatus, 0) < 0) {
+            const int32_t saved_errno = errno;
+            if (saved_errno == ECHILD) // ni vec otrok -> koncamo
+            {
+                break;
+            }
+            perror("waitall");
+            return saved_errno;
+        }
+    }
+
+    return 0;
+}
+
+int32_t execute_builtin(const Command* cmd, const builtin_fn fn) {
+    // ce izvajamo ukaz v ospredju ne naredimo forka ampak samo pozenemo (drugace je v `execute_external` tam vedno naredimo fork+execvp combo)
+    if (!cmd->run_in_bg) {
+        return fn(cmd->args);
+    }
+
+    const pid_t pid = fork();
+
+    if (pid < 0) {
+        const int32_t saved_errno = errno;
+        perror("execute_builtin");
+        return saved_errno;
+    } else if (pid == 0) // otrok
+    {
+        /*
+         * ne daj `_exit(fn(cmd->args))` ker potem je pri 3.4.3 napacen vrstni red izpisa
+         */
+        const int32_t status = fn(cmd->args);
+        _exit(status);
+    } else // stars
+    {
+        return 0;
+    }
+}
+
 int32_t execute_external(const Command* cmd) {
     const pid_t pid = fork();
     int32_t wstatus = 0;
@@ -1603,6 +1604,9 @@ int32_t execute(const TokenList* token_list) {
     const Command cmd = build_command(token_list);
     const builtin_fn fn = find_builtin(cmd.args[0]);
 
+    const bool is_background = cmd.run_in_bg;
+    const bool is_exit_builtin = (fn == builtin_exit);
+
     int32_t ret_status = 0;
 
     if (fn != NULL)// found built-in
@@ -1611,7 +1615,7 @@ int32_t execute(const TokenList* token_list) {
         {
             printf("Executing builtin '%s' in %s\n", (char*)cmd.args[0], cmd.run_in_bg ? "background" : "foreground");
         }
-        ret_status = fn(cmd.args);
+        ret_status = execute_builtin(&cmd, fn);
     } else
     {
 #ifdef NALOGA1_REPL_3
@@ -1621,15 +1625,23 @@ int32_t execute(const TokenList* token_list) {
 #endif
 
         ret_status = execute_external(&cmd);
-
     }
 
-    if (!cmd.run_in_bg)
+    if (!is_background)
     {
         LAST_EXIT_STATUS = ret_status;
     }
 
     free_command(&cmd);
+
+    if (!is_background && is_exit_builtin)
+    {
+        /*
+         * od 3.4 naprej tukaj izvedemo exit namesto v `builtin_exit`
+         * da se izgonemo zmedi s statusi
+         */
+        exit(LAST_EXIT_STATUS);
+    }
 
     return ret_status;
 }
@@ -1660,23 +1672,8 @@ int main(const int argc, char* argv[]) {
         exit(1);
     }
 
-    if (IS_INTERACTIVE) enable_raw_mode();
-
-    while (1)
+    while (fgets((char*)buffer, INPUT_BUFFER_SIZE, (FILE*)input) != NULL)
     {
-        bool got_line = false;
-        if (IS_INTERACTIVE)
-        {
-            const int32_t n = read_line_interactive(buffer, INPUT_BUFFER_SIZE);
-            if (n <= 0) break;
-            got_line = true;
-        } else
-        {
-            got_line = (fgets((char*)buffer, INPUT_BUFFER_SIZE, (FILE*)input) != NULL);
-        }
-        if (!got_line) break;
-
-
         TokenList token_list = {0};
         token_list.input_line = buffer;
 
