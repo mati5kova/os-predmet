@@ -1,0 +1,103 @@
+## SIGNALI
+- programska prekinitev procesa (enosmerna komunkacija) - kratko sporočilo (številka signala)
+
+### Vrsta signala
+- je podana s številko signala oz. oznako signala
+Št. Oznaka Opis
+1 SIGHUP Hang up
+2 SIGINT Interrupt (Ctrl+C)
+3 SIGQUIT Quit (Ctlr+/)
+4 SIGILL Illegal instruction
+5 SIGTRAP Trap (breakpoint)
+6 SIGABRT Abort (klic abort())
+7 SIGBUS Bus error (neveljaven naslov)
+8 SIGFPE FPE error (aritmetična napaka)
+9 SIGKILL Kill process (brezpogojni)
+10 SIGUSR1 User signal 1
+11 SIGSEGV Segmentation violation
+12 SIGUSR2 User signal 2
+13 SIGPIPE Broken pipe
+14 SIGALRM Alarm
+15 SIGTERM Terminate process
+16 SIGSTKFLT
+17 SIGCHLD Child terminated
+18 SIGCONT Continue process (brezpogojni)
+19 SIGSTOP Stop process (brezpogojni)
+20 SIGTSTP Stop process from terminal (Ctrl+Z)
+
+### Rokovanje signalov
+- vsak signal ima svoj rokovalnik (kratka routina, ki se izvede ob prejetju signala)
+
+Načini rokovanaja:
+- privzeti rokovalnik: SIG_DFL - default (za privzeto rokovanje poskrbi OS)
+- ognoriranje signala: SIG_IGN - ignore
+- uporabniški rokovalnik
+
+Možni privzeti odzivi:
+- končanje procesa (izhodni status: 128 + št. signala)
+- končanje procesa in zapis core datoteke (core dump)
+- zaustavitev procesa
+- nadaljevanje procesa
+
+Skupine:
+- ukinjanje procesa
+        SIGTERM  generična ukinitev procesa
+        SIGINT      prekinitev procesa s Ctrl+C
+        SIGQUIT   prekinitev procesa s Ctrl+\, core dump
+        SIGKILL    brezpogojna ukinitev procesa
+        SIGHUP    sporočilo o končanju pripadajočega terminala
+- programske napake
+        SIGFPE    aritmetična napaka
+        SIGILL      napačen strojni ukaz
+        SIGSEGV kršenje pomnilniške zaščite
+        SIGBUS    napačen pomnilniški naslov
+        SIGABRT  resna napaka oz. klic abort()
+- nadzor procesov/poslov
+        SIGCHLD  sporočilo staršu o končanju otroka
+        SIGCONT  nadaljevanje zaustavljenga procesa
+        SIGSTOP   brezpogojna zaustavitev procesa
+        SIGTSTP   zaustavitev procesa s Ctrl+Z
+        SIGTTIN    posel (proces v ozadju) je bral s terminala
+- razno
+        SIGUSR1  prvi uporabniški signal
+        SIGUSR2  drugi uporabniški signal
+        
+## POŠILJANJE SIGNALA
+Lupina: ukaz `kill`
+    - pošiljanje signala enemu ali več procesom
+    - lahko vrne tudi seznam signalov (kill - l), (kill -l  SEGV ~ kill -l SIGSEGV), (kill -0  $(pidof proces) -> izpiše ...(preverimo ali imamo pravico da pošljemo kill)), (kill -2 $(pidof xeyes))
+    
+Sistemski klic `kill(pid, signum)`
+    - pošiljanje signala št. `signum` procesu `pid`
+    
+Sistemski klic `raise(signum)`
+    - pošiljanje signala samemu sebi
+    
+## LOVLJENJE SIGNALOV
+Lupina: ukaz `trap`
+    - izpis obstoječih (uporabniških) rokovalnikov
+    - nastavljanje pasti - rokovalnika signala
+    - ignoriranje signala
+    - ponastavitev rokovalnika
+trap -p
+trap "ls" SIGUSR1
+trap "echo Zivjo" 2
+trap -p SIGINT
+trap "" 2
+trap - INT
+   
+Nov proces:
+    - otrok deduje rokovalnike starša
+    - sistemski klic fork()kopira kodo in s tem tudi rokovalnike
+Nov program:
+    - ima privzete rokovalnike
+    - sistemski klic exec()ustvari novo sliko procesa iz podanega ukaza, s tem se stari rokovalniki izgubijo 
+    
+Uporabniški rokovalnik:
+    - sistemski klic `signal(signum, sigfun)`
+    - ob prejetju signala `signum` se pokliče funkcija `sigfun`
+    - podpis rokovalne funkcije
+        void rokovalnik(int signum) {
+            // telo funkcije
+        }
+    
