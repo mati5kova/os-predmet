@@ -126,6 +126,9 @@ int32_t execute(const TokenList* token_list);
 int32_t execute_builtin(const Command* cmd, builtin_fn fn);
 int32_t execute_external(const Command* cmd);
 
+int32_t redir_in_out(const Command* cmd, int32_t saved_fd[2]);
+void restore_saved_fd(int32_t saved_fd[2]);
+
 int32_t builtin_debug(uint8_t** args);
 int32_t builtin_prompt(uint8_t** args);
 int32_t builtin_status(uint8_t** args);
@@ -1529,10 +1532,77 @@ int32_t builtin_waitall(uint8_t** args) {
     return 0;
 }
 
+int32_t redir_in_out(const Command* cmd, int32_t saved_fd[2]) {
+    if (cmd->redirect_in != NULL)
+    {
+        if (saved_fd != NULL)
+        {
+            saved_fd[0] = dup(STDIN_FILENO);
+        }
+
+        int32_t redirectInFd;
+        if ((redirectInFd = open((const char*)cmd->redirect_in, O_RDONLY)) == -1)
+        {
+            const int32_t saved_errno = errno;
+            perror("redirect-in > open");
+            return saved_errno;
+        }
+        dup2(redirectInFd, STDIN_FILENO);
+        close(redirectInFd);
+    }
+
+    if (cmd->redirect_out != NULL)
+    {
+        if (saved_fd != NULL)
+        {
+            saved_fd[1] = dup(STDOUT_FILENO);
+        }
+
+        int32_t redirectOutFd;
+        if ((redirectOutFd = open((const char*)cmd->redirect_out, O_WRONLY | O_CREAT | O_TRUNC, 0644)) == -1)
+        {
+            const int32_t saved_errno = errno;
+            perror("redirect-out > open");
+            return saved_errno;
+        }
+        dup2(redirectOutFd, STDOUT_FILENO);
+        close(redirectOutFd);
+    }
+
+    return 0;
+}
+
+void restore_saved_fd(int32_t saved_fd[2]) {
+    if (saved_fd == NULL) return;
+
+    if (saved_fd[0] != -1)
+    {
+        dup2(saved_fd[0], STDIN_FILENO);
+        close(saved_fd[0]);
+    }
+    if (saved_fd[1] != -1)
+    {
+        dup2(saved_fd[1], STDOUT_FILENO);
+        close(saved_fd[1]);
+    }
+}
+
 int32_t execute_builtin(const Command* cmd, const builtin_fn fn) {
     // ce izvajamo ukaz v ospredju ne naredimo forka ampak samo pozenemo (drugace je v `execute_external` tam vedno naredimo fork+execvp combo)
+    int32_t saved_fd[2] = {-1, -1};
+
     if (!cmd->run_in_bg) {
-        return fn(cmd->args);
+        const int32_t redir_status = redir_in_out(cmd, saved_fd);
+        if (redir_status != 0)
+        {
+            return redir_status;
+        }
+
+        const int32_t ret_status = fn(cmd->args);
+
+        restore_saved_fd(saved_fd);
+
+        return ret_status;
     }
 
     const pid_t pid = fork();
@@ -1541,17 +1611,22 @@ int32_t execute_builtin(const Command* cmd, const builtin_fn fn) {
         const int32_t saved_errno = errno;
         perror("execute_builtin");
         return saved_errno;
-    } else if (pid == 0) // otrok
+    }
+
+    if (pid == 0) // otrok
     {
-        /*
-         * ne daj `_exit(fn(cmd->args))` ker potem je pri 3.4.3 napacen vrstni red izpisa
-         */
+        const int32_t redirStatus = redir_in_out(cmd, NULL);
+        if (redirStatus != 0)
+        {
+            _exit(redirStatus);
+        }
+
+        // ne daj `_exit(fn(cmd->args))` ker potem je pri 3.4.3 napacen vrstni red izpisa
         const int32_t status = fn(cmd->args);
         _exit(status);
-    } else // stars
-    {
-        return 0;
     }
+
+    return 0;
 }
 
 int32_t execute_external(const Command* cmd) {
@@ -1560,7 +1635,7 @@ int32_t execute_external(const Command* cmd) {
 
     if (pid < 0)
     {
-        int32_t saved_errno = errno;
+        const int32_t saved_errno = errno;
         perror("execute external");
         return saved_errno;
     } else if (pid > 0) // parent
@@ -1590,6 +1665,12 @@ int32_t execute_external(const Command* cmd) {
         }
     } else // child
     {
+        const int32_t redir_status = redir_in_out(cmd, NULL);
+        if (redir_status != 0)
+        {
+            _exit(redir_status);
+        }
+
         execvp((const char*)cmd->args[0], (char* const*)cmd->args);
         perror("exec");
         _exit(127);
