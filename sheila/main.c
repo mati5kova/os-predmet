@@ -37,7 +37,6 @@
 #define LINKREAD_MAXLEN 256
 #define CPCAT_BUFF_MAXLEN 4096
 #define SHELL_NAME_AND_INTIAL_PROMPT "mysh"
-#define HISTORY_MAXLEN 16
 #define PROCFS_DEFAULT_PATH "/proc"
 #define PIDS_ARR_INITIAL_CAPACITY 8
 
@@ -100,8 +99,6 @@ int32_t DEBUG_LVL = INITIAL_DEBUG_LVL;
 int32_t LAST_EXIT_STATUS = 0;
 uint8_t* PROMPT = (uint8_t*)SHELL_NAME_AND_INTIAL_PROMPT;
 bool PROMPT_IS_HEAP = false;
-uint8_t* HISTORY[HISTORY_MAXLEN] = {0};
-uint32_t HISTORY_POSITION = 0;
 uint8_t* PROCFS_PATH = (uint8_t*)PROCFS_DEFAULT_PATH;
 bool PROCFS_PATH_IS_HEAP = false;
 
@@ -111,6 +108,7 @@ bool PROCFS_PATH_IS_HEAP = false;
 static inline void print_shell(void);
 void print_command_args(uint8_t** args, int32_t start, const uint8_t* separator, bool new_line);
 void emit_token(int32_t symbol_start, int32_t symbol_end, TokenType tt, const uint8_t* buffer, TokenList* token_list);
+void free_token_list(const TokenList* token_list);
 static inline bool is_word_char(uint8_t c);
 void lexer(const uint8_t* buffer, TokenList* token_list);
 void parser(const TokenList* token_list);
@@ -128,6 +126,8 @@ int32_t execute_external(const Command* cmd);
 
 int32_t redir_in_out(const Command* cmd, int32_t saved_fd[2]);
 void restore_saved_fd(int32_t saved_fd[2]);
+
+int32_t lex_parse_build_run_stage_in_child(uint8_t* arg);
 
 int32_t builtin_debug(uint8_t** args);
 int32_t builtin_prompt(uint8_t** args);
@@ -173,6 +173,8 @@ int32_t builtin_pinfo(uint8_t** args);
 int32_t builtin_waitone(uint8_t** args);
 int32_t builtin_waitall(uint8_t** args);
 
+int32_t builtin_pipes(uint8_t** args);
+
 // ============================================================
 // BUILTIN DISPATCH TABLE
 // ============================================================
@@ -214,6 +216,7 @@ static const Builtin BUILTINS[] = {
     {"pinfo",    builtin_pinfo},
     {"waitone",  builtin_waitone},
     {"waitall",  builtin_waitall},
+    {"pipes",    builtin_pipes},
 };
 static const int32_t BUILTIN_COUNT = sizeof(BUILTINS) / sizeof(BUILTINS[0]);
 
@@ -264,6 +267,14 @@ void free_command(const Command* cmd) {
     free(cmd->args);
     free(cmd->redirect_in);
     free(cmd->redirect_out);
+}
+
+void free_token_list(const TokenList* token_list) {
+    for (int32_t i = 0; i < token_list->count; i++)
+    {
+        free(token_list->tokens[i].str_val);
+    }
+    free(token_list->tokens);
 }
 
 static inline bool is_word_char(const uint8_t c) {
@@ -1532,6 +1543,153 @@ int32_t builtin_waitall(uint8_t** args) {
     return 0;
 }
 
+// uporabi lexer, parser, build_command, find_builtin
+// ne mores uporabit execute_builtin/external ker so prevec loaded in naredijo svoje procese
+int32_t lex_parse_build_run_stage_in_child(uint8_t* arg) {
+    TokenList token_list = {0};
+    token_list.input_line = arg;
+    lexer(arg, &token_list);
+
+    parser(&token_list);
+
+    Command cmd = build_command(&token_list);
+
+    // pipes "" "cat"
+    if (cmd.args[0] == NULL || strcmp((const char*)cmd.args[0], "") == 0)
+    {
+        free_command(&cmd);
+        _exit(1);
+    }
+    const builtin_fn fn = find_builtin(cmd.args[0]);
+
+    if (fn != NULL) // builtin
+    {
+        int32_t ret_status = 0;
+        ret_status = fn(cmd.args);
+
+        free_command(&cmd);
+
+        free_token_list(&token_list);
+
+        _exit(ret_status);
+    } else
+    {
+        execvp((const char*)cmd.args[0], (char* const*)cmd.args);
+        perror("exec");
+
+        free_command(&cmd);
+        free_token_list(&token_list);
+
+        _exit(127);
+    }
+}
+
+int32_t builtin_pipes(uint8_t** args) {
+    const int32_t arg_cnt = argument_count(args);
+    if (arg_cnt < 3)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            fprintf(stderr, "Usage: pipes \"stage1\" \"stage2\" \"stage3?\" ...\n");
+        }
+        return 1;
+    }
+
+    const int32_t num_of_stages = arg_cnt - 1; // -1:ime ukaza
+    const int32_t num_of_pipes = num_of_stages - 1; //  -1: N stagov=(N-1) cevi
+    int32_t fds[2 *num_of_pipes];
+    for (int32_t p = 0; p < num_of_pipes; p++)
+    {
+        if (pipe(&fds[2 * p]) != 0)
+        {
+            const int32_t saved_errno = errno;
+            perror("pipe");
+            return saved_errno;
+        }
+    }
+
+    int32_t pids[num_of_stages];
+    int32_t num_created_children = 0;
+
+    for (int32_t i = 0; i < num_of_stages; i++)
+    {
+
+        const int32_t pid = fork();
+        if (pid < 0)
+        {
+            int32_t saved_errno = errno;
+            perror("fork");
+            for (int32_t p = 0; p < 2*num_of_pipes; p++)
+            {
+                close(fds[p]);
+            }
+            for (int32_t c = 0; c < num_created_children; c++)
+            {
+                int32_t wstatus;
+                if (waitpid(pids[c], &wstatus, 0) < 0) {
+                    saved_errno = errno;
+                    perror("waitpid");
+                    return saved_errno;
+                }
+            }
+
+            return saved_errno;
+        } else if (pid > 0)
+        {
+            pids[i] = pid;
+            num_created_children++;
+        } else // (pid == 0) - otrok
+        {
+            if (i > 0)
+            {
+                if (dup2(fds[2 * (i - 1)], STDIN_FILENO)< 0) {
+                    perror("dup2");
+                    _exit(errno);
+                }
+            }
+            if (i < num_of_stages - 1)
+            {
+                if (dup2(fds[2 * i + 1], STDOUT_FILENO) < 0) {
+                    perror("dup2");
+                    _exit(errno);
+                }
+            }
+            // zapremo vse pajpe
+            for (int32_t j = 0; j < 2 * num_of_pipes; j++) {
+                close(fds[j]);
+            }
+
+            lex_parse_build_run_stage_in_child(args[i + 1]);
+        }
+    }
+
+    for (int32_t i = 0; i < 2*num_of_pipes; i++)
+    {
+        close(fds[i]);
+    }
+
+    int32_t last_status = 0;
+
+    for (int32_t i = 0; i < num_of_stages; i++)
+    {
+        int32_t wstatus;
+        waitpid(pids[i], &wstatus, 0);
+
+        if (i == num_of_stages - 1)
+        {
+            if (WIFEXITED(wstatus))
+            {
+                last_status = WEXITSTATUS(wstatus);
+            } else if (WIFSIGNALED(wstatus))
+            {
+                last_status = 128 + WTERMSIG(wstatus);
+            }
+        }
+    }
+
+    return last_status;
+}
+
 int32_t redir_in_out(const Command* cmd, int32_t saved_fd[2]) {
     if (cmd->redirect_in != NULL)
     {
@@ -1758,12 +1916,6 @@ int main(const int argc, char* argv[]) {
         TokenList token_list = {0};
         token_list.input_line = buffer;
 
-        // zgodovina
-        const uint32_t slot = HISTORY_POSITION % HISTORY_MAXLEN;
-        free(HISTORY[slot]);
-        HISTORY[slot] = (uint8_t*)strdup((const char*)buffer);
-        HISTORY_POSITION++;
-
         lexer(buffer, &token_list);
 
         parser(&token_list);
@@ -1813,11 +1965,7 @@ int main(const int argc, char* argv[]) {
         execute(&token_list);
 
         // cleanup after this command
-        for (int32_t i = 0; i < token_list.count; i++)
-        {
-            free(token_list.tokens[i].str_val);
-        }
-        free(token_list.tokens);
+        free_token_list(&token_list);
 
         print_shell();
     }
@@ -1829,12 +1977,6 @@ int main(const int argc, char* argv[]) {
     }
 
     free(buffer);
-
-    const uint32_t filled = MIN(HISTORY_POSITION, HISTORY_MAXLEN);
-    for (uint32_t i = 0; i < filled; i++)
-    {
-        free(HISTORY[i]);
-    }
 
     exit(LAST_EXIT_STATUS);
 }
