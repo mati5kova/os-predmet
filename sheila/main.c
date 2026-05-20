@@ -32,7 +32,8 @@
 // ============================================================
 // CONSTANTS
 // ============================================================
-#define INPUT_BUFFER_SIZE 4096
+#define COMMAND_HISTORY_INITIAL_CAP 32
+#define INPUT_BUFFER_SIZE 1024
 #define CWD_MAXLEN 256
 #define LINKREAD_MAXLEN 256
 #define CPCAT_BUFF_MAXLEN 4096
@@ -94,6 +95,8 @@ typedef struct {
 // ============================================================
 // GLOBAL STATE
 // ============================================================
+static struct termios original_termios;
+static bool raw_enabled = false;
 bool IS_INTERACTIVE = false;
 int32_t DEBUG_LVL = INITIAL_DEBUG_LVL;
 int32_t LAST_EXIT_STATUS = 0;
@@ -101,10 +104,20 @@ uint8_t* PROMPT = (uint8_t*)SHELL_NAME_AND_INTIAL_PROMPT;
 bool PROMPT_IS_HEAP = false;
 uint8_t* PROCFS_PATH = (uint8_t*)PROCFS_DEFAULT_PATH;
 bool PROCFS_PATH_IS_HEAP = false;
+uint8_t* HISTORY_FILE_PATH = (uint8_t*)"./.myshhistory";
 
 // ============================================================
 // FUNCTION PROTOTYPES
 // ============================================================
+void add_command_to_history_file(const uint8_t* command_to_store);
+int32_t command_history_init(void);
+void add_command_to_history_internal(const uint8_t* command_to_store);
+void add_command_to_history(const uint8_t* command_to_store);
+
+void disable_raw_mode(void);
+void enable_raw_mode(void);
+uint8_t* read_line(void);
+
 static inline void print_shell(void);
 void print_command_args(uint8_t** args, int32_t start, const uint8_t* separator, bool new_line);
 void emit_token(int32_t symbol_start, int32_t symbol_end, TokenType tt, const uint8_t* buffer, TokenList* token_list);
@@ -128,6 +141,8 @@ int32_t redir_in_out(const Command* cmd, int32_t saved_fd[2]);
 void restore_saved_fd(int32_t saved_fd[2]);
 
 int32_t lex_parse_build_run_stage_in_child(uint8_t* arg);
+
+int32_t builtin_histclear(uint8_t** args);
 
 int32_t builtin_debug(uint8_t** args);
 int32_t builtin_prompt(uint8_t** args);
@@ -179,57 +194,371 @@ int32_t builtin_pipes(uint8_t** args);
 // BUILTIN DISPATCH TABLE
 // ============================================================
 static const Builtin BUILTINS[] = {
-    { "debug",   builtin_debug},
-    { "prompt",  builtin_prompt},
-    { "status",  builtin_status},
-    { "exit",    builtin_exit },
-    { "help",    builtin_help},
-    { "print",   builtin_print},
-    { "echo",    builtin_echo},
-    { "len",     builtin_len},
-    { "sum",     builtin_sum},
-    { "calc",    builtin_calc},
-    { "basename",builtin_basename},
-    { "dirname", builtin_dirname},
-    { "dirch",   builtin_dirch},
-    { "dirwd",   builtin_dirwd},
-    { "dirmk",   builtin_dirmk},
-    { "dirrm",   builtin_dirrm},
-    { "dirls",   builtin_dirls},
-    {"rename",   builtin_rename},
-    {"unlink",   builtin_unlink},
-    {"remove",   builtin_remove},
-    {"linkhard", builtin_linkhard},
-    {"linksoft", builtin_linksoft},
-    {"linkread", builtin_linkread},
-    {"linklist", builtin_linklist},
-    {"cpcat",    builtin_cpcat},
-    {"pid",      builtin_pid},
-    {"ppid",     builtin_ppid},
-    {"uid",      builtin_uid},
-    {"euid",     builtin_euid},
-    {"gid",      builtin_gid},
-    {"egid",     builtin_egid},
-    {"sysinfo",  builtin_sysinfo},
-    {"proc",     builtin_proc},
-    {"pids",     builtin_pids},
-    {"pinfo",    builtin_pinfo},
-    {"waitone",  builtin_waitone},
-    {"waitall",  builtin_waitall},
-    {"pipes",    builtin_pipes},
-};
+    {"histclear", builtin_histclear},
+    { "debug",    builtin_debug},
+    { "prompt",   builtin_prompt},
+    { "status",   builtin_status},
+    { "exit",     builtin_exit },
+    { "help",     builtin_help},
+    { "print",    builtin_print},
+    { "echo",     builtin_echo},
+    { "len",      builtin_len},
+    { "sum",      builtin_sum},
+    { "calc",     builtin_calc},
+    { "basename", builtin_basename},
+    { "dirname",  builtin_dirname},
+    { "dirch",    builtin_dirch},
+    { "dirwd",    builtin_dirwd},
+    { "dirmk",    builtin_dirmk},
+    { "dirrm",    builtin_dirrm},
+    { "dirls",    builtin_dirls},
+    {"rename",    builtin_rename},
+    {"unlink",    builtin_unlink},
+    {"remove",    builtin_remove},
+    {"linkhard",  builtin_linkhard},
+    {"linksoft",  builtin_linksoft},
+    {"linkread",  builtin_linkread},
+    {"linklist",  builtin_linklist},
+    {"cpcat",     builtin_cpcat},
+    {"pid",       builtin_pid},
+    {"ppid",      builtin_ppid},
+    {"uid",       builtin_uid},
+    {"euid",      builtin_euid},
+    {"gid",       builtin_gid},
+    {"egid",      builtin_egid},
+    {"sysinfo",   builtin_sysinfo},
+    {"proc",      builtin_proc},
+    {"pids",      builtin_pids},
+    {"pinfo",     builtin_pinfo},
+    {"waitone",   builtin_waitone},
+    {"waitall",   builtin_waitall},
+    {"pipes",     builtin_pipes},
+} ;
 static const int32_t BUILTIN_COUNT = sizeof(BUILTINS) / sizeof(BUILTINS[0]);
+
+// COMMAND HISTORY
+typedef struct {
+    uint8_t** hist_entries;
+    int32_t   capacity;
+    int32_t   count;
+} CommandHistory;
+
+CommandHistory HISTORY = {0};
 
 // ============================================================
 // FUNCTION DEFINITIONS
 // ============================================================
+
+// -- history --------------------------------------------------
+void add_command_to_history_file(const uint8_t* command_to_store) {
+    if (command_to_store == NULL || command_to_store[0] == '\0') {
+        return;
+    }
+
+    uint8_t* path = expand_tilde(HISTORY_FILE_PATH);
+    FILE* history_file = fopen((const char*)path, "a");
+    free(path);
+    if (history_file == NULL)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("fopen");
+        }
+        return;
+    }
+
+    const int32_t chars_written = fprintf(history_file, "%s\n",(const char*)command_to_store);
+    if (chars_written == EOF)
+    {
+        if (DEBUG_LVL == DEEP_DEBUG_MODE)
+        {
+            perror("fprintf");
+        }
+    }
+
+    fclose(history_file);
+}
+
+void add_command_to_history_internal(const uint8_t* command_to_store) {
+    if (command_to_store == NULL || command_to_store[0] == '\0') {
+        return;
+    }
+
+    if (HISTORY.count >= HISTORY.capacity)
+    {
+        const int32_t new_cap = HISTORY.capacity * 2;
+        uint8_t** temp = realloc(HISTORY.hist_entries, new_cap*sizeof(uint8_t*));
+        if (temp == NULL)
+        {
+            perror("realloc");
+            exit(errno);
+        }
+        HISTORY.hist_entries = temp;
+        HISTORY.capacity = new_cap;
+    }
+
+    HISTORY.hist_entries[HISTORY.count++] = (uint8_t*)strdup((const char*)command_to_store);
+}
+
+int32_t command_history_init(void) {
+    HISTORY.hist_entries = malloc(COMMAND_HISTORY_INITIAL_CAP * sizeof(uint8_t*));
+    if (HISTORY.hist_entries == NULL) {
+        perror("malloc");
+        return 1;
+    }
+
+    HISTORY.capacity = COMMAND_HISTORY_INITIAL_CAP;
+    HISTORY.count = 0;
+
+    uint8_t *path = expand_tilde(HISTORY_FILE_PATH);
+
+    FILE* history_file = fopen((const char*)path, "r");
+    if (history_file == NULL) {
+        // ce ga se ni je vredu se bo ustvaril ob appendu
+        free(path);
+        return 0;
+    }
+
+    uint8_t buffer[INPUT_BUFFER_SIZE];
+
+    while (fgets((char*)buffer, INPUT_BUFFER_SIZE, history_file) != NULL) {
+        buffer[strcspn((char*)buffer, "\n")] = '\0';
+        add_command_to_history_internal(buffer);
+    }
+
+    fclose(history_file);
+    free(path);
+    return 0;
+}
+
+
+void add_command_to_history(const uint8_t* command_to_store) {
+    if (command_to_store == NULL || command_to_store[0] == '\0') {
+        return;
+    }
+
+    add_command_to_history_file(command_to_store);
+    add_command_to_history_internal(command_to_store);
+}
+
+// -- termios --------------------------------------------------
+void disable_raw_mode(void)
+{
+    if (raw_enabled) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
+        raw_enabled = 0;
+    }
+}
+
+void enable_raw_mode(void) {
+    if (!isatty(STDIN_FILENO))
+    {
+        return;
+    }
+
+    struct termios raw;
+
+    tcgetattr(STDIN_FILENO, &original_termios); // shrani zacetno stanje
+
+    raw = original_termios;
+
+    // disable cannonical mode -> read() brez da cakamo \n
+    // disable echo -> rocno printamo kaj napisemo -> imamo vec kontrole za npr. zgodovino...
+    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 1; // read() caka za vsaj 1 byte
+    raw.c_cc[VTIME] = 0;
+
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    raw_enabled = true;
+}
+
+uint8_t* read_line(void) {
+    uint8_t buffer[INPUT_BUFFER_SIZE];
+    size_t len = 0, cursor = 0;
+    int32_t position_in_history = HISTORY.count;
+
+    while (1)
+    {
+        char c;
+        const ssize_t n = read(STDIN_FILENO, &c, 1);
+
+        if (n <= 0) return NULL;
+
+        if (c == '\n' || c == '\r')
+        {
+            write(STDOUT_FILENO, "\n", 1);
+            buffer[len] = '\0';
+            cursor = 0;
+            return (uint8_t*)strdup((const char*)buffer);
+        }
+
+        // ctrl+d
+        if (c == 4)
+        {
+            if (len == 0)
+            {
+                write(STDOUT_FILENO, "\n", 1);
+                return NULL;
+            }
+            continue;
+        }
+
+        // backspace
+        if (c == 127 || c == '\b')
+        {
+            if (len > 0)
+            {
+                len--;
+                cursor--;
+                memmove(&buffer[cursor], &buffer[cursor + 1], len - cursor);
+
+                write(STDOUT_FILENO, "\b", 1);
+                write(STDOUT_FILENO, &buffer[cursor], len - cursor);
+                write(STDOUT_FILENO, " ", 1);
+
+                for (size_t i = cursor; i <= len; i++)
+                    write(STDOUT_FILENO, "\b", 1);
+            }
+            continue;
+        }
+
+        if (c == '\x1b')
+        {
+            char seq[2];
+
+            if (read(STDIN_FILENO, &seq[0], 1) != 1) continue;
+
+            if (read(STDIN_FILENO, &seq[1], 1) != 1) continue;
+
+            if (seq[0] == '[')
+            {
+                switch (seq[1])
+                {
+                case 'A': {
+                    if (position_in_history > 0) {
+                        position_in_history--;
+
+                        const char* hist = (const char*)HISTORY.hist_entries[position_in_history];
+
+                        while (cursor > 0) {
+                            write(STDOUT_FILENO, "\b \b", 3);
+                            cursor--;
+                        }
+
+                        strncpy((char*)buffer, hist, INPUT_BUFFER_SIZE - 1);
+                        buffer[INPUT_BUFFER_SIZE - 1] = '\0';
+
+                        len = strlen((const char*)buffer);
+                        cursor = len;
+
+                        write(STDOUT_FILENO, buffer, len);
+                    }
+                    continue;
+                }
+                case 'B': {
+                    if (position_in_history < HISTORY.count) {
+                        position_in_history++;
+
+                        while (cursor > 0) {
+                            write(STDOUT_FILENO, "\b \b", 3);
+                            cursor--;
+                        }
+
+                        if (position_in_history == HISTORY.count) {
+                            buffer[0] = '\0';
+                            len = 0;
+                            cursor = 0;
+                        } else {
+                            const char* hist = (const char*)HISTORY.hist_entries[position_in_history];
+
+                            strncpy((char*)buffer, hist, INPUT_BUFFER_SIZE - 1);
+                            buffer[INPUT_BUFFER_SIZE - 1] = '\0';
+
+                            len = strlen((const char*)buffer);
+                            cursor = len;
+
+                            write(STDOUT_FILENO, buffer, len);
+                        }
+                    }
+                    continue;
+                }
+                case 'C': {
+                    if (cursor < len)
+                    {
+                        write(STDOUT_FILENO, "\x1b[C", 3);
+                        cursor++;
+                    }
+                    continue;
+                }
+                case 'D': {
+                    if (cursor > 0)
+                    {
+                        write(STDOUT_FILENO, "\x1b[D", 3);
+                        cursor--;
+                    }
+                    continue;
+                }
+                default: continue;
+                }
+            }
+        }
+
+        if (isprint((unsigned char)c))
+        {
+            if (len < INPUT_BUFFER_SIZE - 1)
+            {
+                if (cursor == len) // smo s cursorjem na koncu - samo dodajamo v buffer
+                {
+                    buffer[len++] = c;
+                    cursor++;
+                    write(STDOUT_FILENO, &c, 1);
+                }
+                else
+                {
+                    // zamakni vse od cursorja za eno v desno
+                    memmove(&buffer[cursor + 1], &buffer[cursor], len - cursor);
+                    buffer[cursor] = c;
+                    len++;
+                    cursor++;
+
+                    write(STDOUT_FILENO, &buffer[cursor - 1], len - cursor + 1);
+
+                    for (size_t i = cursor; i < len; i++)
+                        write(STDOUT_FILENO, "\b", 1);
+                }
+            }
+            continue;
+        }
+    }
+}
 
 // -- helpers --------------------------------------------------
 static inline void print_shell(void) {
     if (IS_INTERACTIVE)
     {
         fflush(stderr);
-        printf("%s>", (char*)PROMPT);
+        printf("%s", (char*)PROMPT);
+
+        bool obtainedCWD = true;
+
+        uint8_t cwd[CWD_MAXLEN];
+        if (getcwd((char*)cwd, CWD_MAXLEN) == NULL)
+        {
+            obtainedCWD = false;
+        }
+
+        if (obtainedCWD)
+        {
+            uint8_t* pass_args[4];
+            pass_args[0] = (unsigned char*)"print_shell";
+            pass_args[1] = cwd;
+            pass_args[2] = (unsigned char*)"no_new_line";
+            pass_args[3] = NULL;
+            printf(" ");
+            builtin_basename(pass_args);
+        }
+
+        printf(">");
         fflush(stdout);
     }
 }
@@ -493,6 +822,28 @@ builtin_fn find_builtin(const uint8_t* command_str) {
     return NULL;
 }
 
+int32_t builtin_histclear(uint8_t** args) {
+    if (args == NULL) return 0;
+    remove((const char*)HISTORY_FILE_PATH);
+    for (int32_t i = 0; i < HISTORY.count; i++)
+    {
+        free(HISTORY.hist_entries[i]);
+    }
+    free(HISTORY.hist_entries);
+
+    HISTORY.hist_entries = malloc(COMMAND_HISTORY_INITIAL_CAP * sizeof(uint8_t*));
+    if (HISTORY.hist_entries == NULL) {
+        perror("malloc");
+        HISTORY.capacity = 0;
+        HISTORY.count = 0;
+        return errno;
+    }
+    HISTORY.capacity = COMMAND_HISTORY_INITIAL_CAP;
+    HISTORY.count = 0;
+
+    return 0;
+}
+
 int32_t builtin_debug(uint8_t** args) {
     const int32_t arg_cnt = argument_count(args);
     if (arg_cnt > 1)
@@ -556,7 +907,7 @@ int32_t builtin_exit(uint8_t** args) {
         char* end = NULL;
         errno = 0;
 
-        long value = strtol((const char*)args[1], &end, 10);
+        const long value = strtol((const char*)args[1], &end, 10);
 
         if (end == (char*)args[1] || *end != '\0' || errno == ERANGE) {
             status = -1;
@@ -666,7 +1017,8 @@ int32_t builtin_calc(uint8_t** args) {
 }
 
 int32_t builtin_basename(uint8_t** args) {
-    if (args == NULL || argument_count(args) < 2 || args[1] == NULL)
+    const int32_t arg_cnt = argument_count(args);
+    if (args == NULL || arg_cnt < 2 || args[1] == NULL)
     {
         if (DEBUG_LVL == DEEP_DEBUG_MODE)
         {
@@ -710,7 +1062,14 @@ int32_t builtin_basename(uint8_t** args) {
             break;
         }
     }
-    printf("%.*s\n", end-start+1, (const char*)&args[1][start]);
+    printf("%.*s", end-start+1, (const char*)&args[1][start]);
+
+    // dodatek da izpisemo/neizpisemo \n odvisno a klicemo iz shella (\n ja) ali pa iz print_shell (\n ne)
+    if (arg_cnt < 3 || strcmp((char*)args[2], "no_new_line") != 0)
+    {
+        printf("\n");
+    }
+
     return 0;
 }
 
@@ -1361,7 +1720,7 @@ static int32_t* collect_sorted_pids(int32_t* count) {
     }
 
     int32_t capacity = PIDS_ARR_INITIAL_CAPACITY;
-    int32_t* pids = (int32_t*)malloc(capacity * sizeof(int32_t));
+    int32_t* pids = malloc(capacity * sizeof(int32_t));
     if (pids == NULL)
     {
         closedir(dir);
@@ -1558,6 +1917,7 @@ int32_t lex_parse_build_run_stage_in_child(uint8_t* arg) {
     if (cmd.args[0] == NULL || strcmp((const char*)cmd.args[0], "") == 0)
     {
         free_command(&cmd);
+        free_token_list(&token_list);
         _exit(1);
     }
     const builtin_fn fn = find_builtin(cmd.args[0]);
@@ -1575,7 +1935,7 @@ int32_t lex_parse_build_run_stage_in_child(uint8_t* arg) {
     } else
     {
         execvp((const char*)cmd.args[0], (char* const*)cmd.args);
-        perror("exec");
+        perror((const char*)cmd.args[0]);
 
         free_command(&cmd);
         free_token_list(&token_list);
@@ -1830,7 +2190,7 @@ int32_t execute_external(const Command* cmd) {
         }
 
         execvp((const char*)cmd->args[0], (char* const*)cmd->args);
-        perror("exec");
+        perror((const char*)cmd->args[0]);
         _exit(127);
     }
 
@@ -1902,17 +2262,24 @@ int main(const int argc, char* argv[]) {
         }
     }
 
-    print_shell();
+    uint8_t* buffer = NULL;
 
-    uint8_t* buffer = malloc(INPUT_BUFFER_SIZE * sizeof(uint8_t));
-    if (buffer == NULL)
-    {
-        perror("Error allocating space for buffer");
-        exit(1);
-    }
+    command_history_init();
 
-    while (fgets((char*)buffer, INPUT_BUFFER_SIZE, (FILE*)input) != NULL)
+    while (1)
     {
+        print_shell();
+        if (IS_INTERACTIVE) enable_raw_mode();
+
+        buffer = (uint8_t*)read_line();
+
+        if (IS_INTERACTIVE) disable_raw_mode();
+
+        if (buffer == NULL)
+        {
+            break;
+        }
+
         TokenList token_list = {0};
         token_list.input_line = buffer;
 
@@ -1964,19 +2331,29 @@ int main(const int argc, char* argv[]) {
 
         execute(&token_list);
 
+        add_command_to_history(buffer);
+
         // cleanup after this command
         free_token_list(&token_list);
-
-        print_shell();
+        free(buffer);
     }
 
-    /* free */
-    if (!IS_INTERACTIVE && argc >= 2)
-    {
+    for (int32_t i = 0; i < HISTORY.count; i++) {
+        free(HISTORY.hist_entries[i]);
+    }
+    free(HISTORY.hist_entries);
+
+    if (PROMPT_IS_HEAP) {
+        free(PROMPT);
+    }
+
+    if (PROCFS_PATH_IS_HEAP) {
+        free(PROCFS_PATH);
+    }
+
+    if (!IS_INTERACTIVE && input != stdin) {
         fclose((FILE*)input);
     }
-
-    free(buffer);
 
     exit(LAST_EXIT_STATUS);
 }
