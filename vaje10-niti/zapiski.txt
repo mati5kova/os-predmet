@@ -1,0 +1,4 @@
+## Sočasnost
+1) paralelnost
+2) razvrščanje/menjavanje procesov/niti na CPU
+
