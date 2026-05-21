@@ -104,7 +104,8 @@ uint8_t* PROMPT = (uint8_t*)SHELL_NAME_AND_INTIAL_PROMPT;
 bool PROMPT_IS_HEAP = false;
 uint8_t* PROCFS_PATH = (uint8_t*)PROCFS_DEFAULT_PATH;
 bool PROCFS_PATH_IS_HEAP = false;
-uint8_t* HISTORY_FILE_PATH = (uint8_t*)"./.myshhistory";
+uint8_t* HISTORY_FILE_PATH = (uint8_t*)"~/.mysh_history";
+uint8_t* CONFIG_PATH = (uint8_t*)"~/.myshrc";
 
 // ============================================================
 // FUNCTION PROTOTYPES
@@ -113,6 +114,8 @@ void add_command_to_history_file(const uint8_t* command_to_store);
 int32_t command_history_init(void);
 void add_command_to_history_internal(const uint8_t* command_to_store);
 void add_command_to_history(const uint8_t* command_to_store);
+
+void apply_config(void);
 
 void disable_raw_mode(void);
 void enable_raw_mode(void);
@@ -406,7 +409,7 @@ uint8_t* read_line(void) {
         // backspace
         if (c == 127 || c == '\b')
         {
-            if (len > 0)
+            if (cursor > 0)
             {
                 len--;
                 cursor--;
@@ -532,6 +535,45 @@ uint8_t* read_line(void) {
     }
 }
 
+// -- config ---------------------------------------------------
+void apply_config() {
+    uint8_t* path = expand_tilde(CONFIG_PATH);
+
+    FILE* config_file = fopen((const char*)path, "r");
+    if (config_file == NULL)
+    {
+        free(path);
+        return;
+    }
+    free(path);
+
+    uint8_t buffer[INPUT_BUFFER_SIZE];
+    while (fgets((char*)buffer, INPUT_BUFFER_SIZE, config_file) != NULL)
+    {
+        TokenList token_list = {0};
+        token_list.input_line = buffer;
+        lexer(buffer, &token_list);
+
+        parser(&token_list);
+
+        Command cmd = build_command(&token_list);
+
+        const builtin_fn fn = find_builtin(cmd.args[0]);
+
+        if (fn != NULL) // builtin
+        {
+            fn(cmd.args);
+        }
+        // zunanjih komand config se ne podpira
+
+        free_command(&cmd);
+
+        free_token_list(&token_list);
+    }
+
+    fclose(config_file);
+}
+
 // -- helpers --------------------------------------------------
 static inline void print_shell(void) {
     if (IS_INTERACTIVE)
@@ -558,7 +600,7 @@ static inline void print_shell(void) {
             builtin_basename(pass_args);
         }
 
-        printf(">");
+        printf("> ");
         fflush(stdout);
     }
 }
@@ -2266,6 +2308,8 @@ int main(const int argc, char* argv[]) {
 
     command_history_init();
 
+    apply_config();
+
     while (1)
     {
         print_shell();
@@ -2279,6 +2323,8 @@ int main(const int argc, char* argv[]) {
         {
             break;
         }
+
+        add_command_to_history(buffer);
 
         TokenList token_list = {0};
         token_list.input_line = buffer;
@@ -2330,8 +2376,6 @@ int main(const int argc, char* argv[]) {
         }
 
         execute(&token_list);
-
-        add_command_to_history(buffer);
 
         // cleanup after this command
         free_token_list(&token_list);
