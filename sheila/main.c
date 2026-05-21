@@ -2306,25 +2306,40 @@ int main(const int argc, char* argv[]) {
 
     uint8_t* buffer = NULL;
 
-    command_history_init();
+    if (IS_INTERACTIVE)
+    {
+        command_history_init();
+        apply_config();
+    }
 
-    apply_config();
 
     while (1)
     {
         print_shell();
-        if (IS_INTERACTIVE) enable_raw_mode();
 
-        buffer = (uint8_t*)read_line();
-
-        if (IS_INTERACTIVE) disable_raw_mode();
+        if (IS_INTERACTIVE)
+        {
+            enable_raw_mode();
+            buffer = read_line();
+            disable_raw_mode();
+        } else
+        {
+            uint8_t tmp[INPUT_BUFFER_SIZE];
+            if (fgets((char*)tmp, INPUT_BUFFER_SIZE, (FILE*)input) == NULL)
+                break;
+            tmp[strcspn((char*)tmp, "\n")] = '\0';   // strip trailing newline
+            buffer = (uint8_t*)strdup((const char*)tmp);
+        }
 
         if (buffer == NULL)
         {
             break;
         }
 
-        add_command_to_history(buffer);
+        if (IS_INTERACTIVE)
+        {
+            add_command_to_history(buffer);
+        }
 
         TokenList token_list = {0};
         token_list.input_line = buffer;
